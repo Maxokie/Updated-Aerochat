@@ -90,6 +90,10 @@
   "ChatUnknownError": "Unknown error.",
   "ChatServerUnavailable": "Server unavailable",
   "ChatErrorUnauthorized": "Unauthorized request. Please check your token and try again.",
+  "ChatErrorMissingAccess": "You no longer have access to this channel or server. It may have been deleted, or you may have been removed. The channel has been removed from your recent history.",
+  "ChatCallServerOnly": "To call someone, you must start the call in private messages.",
+  "ChatCallRinging": "Ringing {0}...",
+  "ChatCallConnected": "Connected · {0:00}:{1:00}",
   "ChatErrorUnknown": "An unknown error occurred. Please try again.",
   "ChatErrorServerError": "This server is unavailable right now. Please try again later.",
 
@@ -244,5 +248,11 @@
   "TitlebarBasic": "Always use custom basic-theme-fallback titlebar",
 
   "TimeFormat24Hour": "24-Hour Clock",
-  "TimeFormat12Hour": "12-Hour Clock (AM/PM)"
+  "TimeFormat12Hour": "12-Hour Clock (AM/PM)",
+
+  "VoiceMenuProfile": "View Profile",
+  "VoiceMenuMute": "Mute",
+  "VoiceMenuDeafen": "Deafen",
+  "VoiceMenuMicVolume": "Microphone Volume",
+  "VoiceMenuVolume": "Volume"
 }

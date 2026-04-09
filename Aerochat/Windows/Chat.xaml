@@ -490,21 +490,38 @@
                                                                                 <ItemsControl ItemsSource="{Binding ConnectedUsers, Mode=OneWay}">
                                                                                     <ItemsControl.ItemTemplate>
                                                                                         <DataTemplate>
-                                                                                            <StackPanel Orientation="Horizontal" Margin="4,2,0,2">
-                                                                                                <StackPanel.Style>
-                                                                                                    <Style TargetType="StackPanel">
-                                                                                                        <Style.Triggers>
-                                                                                                            <DataTrigger Binding="{Binding IsSpeaking}" Value="True">
-                                                                                                                <Setter Property="Opacity" Value="1" />
-                                                                                                            </DataTrigger>
-                                                                                                            <DataTrigger Binding="{Binding IsSpeaking}" Value="False">
-                                                                                                                <Setter Property="Opacity" Value="0.5" />
-                                                                                                            </DataTrigger>
-                                                                                                        </Style.Triggers>
-                                                                                                    </Style>
-                                                                                                </StackPanel.Style>
-                                                                                                <controls:ProfilePictureFrame FrameSize="ExtraSmall" UserStatus="{Binding Presence.Status}" />
-                                                                                                <TextBlock Margin="4,0,0,0" Text="{Binding Name}" />
+                                                                                            <StackPanel Orientation="Horizontal" Margin="4,2,0,2"
+                                                                                                        MouseRightButtonUp="VoiceUser_RightClick">
+                                                                                                <Grid>
+                                                                                                    <controls:ProfilePictureFrame FrameSize="ExtraSmall" UserStatus="{Binding Presence.Status}" />
+                                                                                                    <!-- Speaking glow ring overlaid on avatar -->
+                                                                                                    <Border CornerRadius="10" BorderThickness="1.5" Margin="-2"
+                                                                                                            BorderBrush="#55CC44" IsHitTestVisible="False">
+                                                                                                        <Border.Style>
+                                                                                                            <Style TargetType="Border">
+                                                                                                                <Setter Property="Opacity" Value="0" />
+                                                                                                                <Style.Triggers>
+                                                                                                                    <DataTrigger Binding="{Binding IsSpeaking}" Value="True">
+                                                                                                                        <Setter Property="Opacity" Value="1" />
+                                                                                                                    </DataTrigger>
+                                                                                                                </Style.Triggers>
+                                                                                                            </Style>
+                                                                                                        </Border.Style>
+                                                                                                    </Border>
+                                                                                                </Grid>
+                                                                                                <TextBlock Margin="4,0,0,0" Text="{Binding Name}">
+                                                                                                    <TextBlock.Style>
+                                                                                                        <Style TargetType="TextBlock">
+                                                                                                            <Setter Property="Opacity" Value="0.55" />
+                                                                                                            <Style.Triggers>
+                                                                                                                <DataTrigger Binding="{Binding IsSpeaking}" Value="True">
+                                                                                                                    <Setter Property="Opacity" Value="1" />
+                                                                                                                    <Setter Property="FontWeight" Value="SemiBold" />
+                                                                                                                </DataTrigger>
+                                                                                                            </Style.Triggers>
+                                                                                                        </Style>
+                                                                                                    </TextBlock.Style>
+                                                                                                </TextBlock>
                                                                                             </StackPanel>
                                                                                         </DataTemplate>
                                                                                     </ItemsControl.ItemTemplate>
@@ -1841,7 +1858,7 @@
                             <TextBlock HorizontalAlignment="Stretch" Text="{loc:Loc ChatAttribution}" />
                         </Hyperlink>
                     </TextBlock>
-                    <StackPanel Margin="0,2,4,0" Orientation="Horizontal" Grid.Column="1" Height="24">
+                    <StackPanel Margin="0,2,4,0" Orientation="Horizontal" Grid.Column="1" Height="24" VerticalAlignment="Center">
                         <StackPanel.Style>
                             <Style TargetType="StackPanel">
                                 <Setter Property="Visibility" Value="Visible" />
@@ -1852,7 +1869,19 @@
                                 </Style.Triggers>
                             </Style>
                         </StackPanel.Style>
+
+                        <!-- Server voice call: "Connected to #channel in Guild" -->
                         <TextBlock Foreground="#333333" FontWeight="Bold" VerticalAlignment="Center">
+                            <TextBlock.Style>
+                                <Style TargetType="TextBlock">
+                                    <Setter Property="Visibility" Value="Visible" />
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding VoiceManager.ChannelVM.Guild}" Value="{x:Null}">
+                                            <Setter Property="Visibility" Value="Collapsed" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </TextBlock.Style>
                             <TextBlock.Text>
                                 <MultiBinding StringFormat="Connected to {0} in {1}">
                                     <Binding Path="VoiceManager.ChannelVM.Name" />
@@ -1860,6 +1889,30 @@
                                 </MultiBinding>
                             </TextBlock.Text>
                         </TextBlock>
+
+                        <!-- DM call: recipient avatar + status text (Ringing / Connected · mm:ss) -->
+                        <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                            <StackPanel.Style>
+                                <Style TargetType="StackPanel">
+                                    <Setter Property="Visibility" Value="Collapsed" />
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding VoiceManager.ChannelVM.Guild}" Value="{x:Null}">
+                                            <Setter Property="Visibility" Value="Visible" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </StackPanel.Style>
+                            <controls:ProfilePictureFrame
+                                FrameSize="ExtraSmall"
+                                UserStatus="{Binding VoiceManager.DmCallRecipient.Presence.Status}"
+                                ProfilePicture="{Binding VoiceManager.DmCallRecipient.Avatar, Converter={StaticResource imageConverter}}"
+                                MouseRightButtonUp="CallParticipant_RightClick"
+                                Cursor="Hand"
+                                Margin="0,0,4,0" />
+                            <TextBlock Foreground="#333333" FontWeight="Bold" VerticalAlignment="Center"
+                                       Text="{Binding CallStatusText}" />
+                        </StackPanel>
+
                         <Image UseLayoutRounding="True" Margin="8,0,0,0" x:Name="LeaveCallButton" PreviewMouseLeftButtonUp="LeaveCallButton_PreviewMouseLeftButtonUp" Cursor="Hand" Source="/Aerochat;component/Resources/Message/LeaveCall.png" Width="16" Height="16" />
                     </StackPanel>
                 </Grid>

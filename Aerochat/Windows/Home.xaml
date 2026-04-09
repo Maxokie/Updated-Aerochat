@@ -5,6 +5,7 @@
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         xmlns:local="clr-namespace:Aerochat.Windows"
         xmlns:converter="clr-namespace:Aerochat.Converter"
+        xmlns:helpers="clr-namespace:Aerochat.Helpers"
         xmlns:controls="clr-namespace:Aerochat.Controls"
         xmlns:viewmodels="clr-namespace:Aerochat.ViewModels" d:DataContext="{d:DesignInstance Type=viewmodels:HomeWindowViewModel}"
         xmlns:loc="clr-namespace:Aerochat.Localization"
@@ -23,6 +24,7 @@
         <converter:MembersCountConverter x:Key="MembersCountConverter" />
         <local:BooleanToVisibilityConverter x:Key="BooleanToVisibilityConverter" />
         <converter:InverseBooleanConverter x:Key="InverseBooleanConverter" />
+        <helpers:ImageConverter x:Key="imageConverter" />
         <Storyboard x:Key="FadeOutStoryboard">
             <DoubleAnimation Storyboard.TargetProperty="Opacity"
                              To="0"
@@ -505,14 +507,14 @@
                                         <Image Margin="4,0,0,0" Width="5" Source="/Aerochat;component/Resources/Home/Dropdown.png" />
                                     </StackPanel>
                                 </Grid>
-                                <Grid>
+                                <Grid PreviewMouseLeftButtonUp="ChangeLayoutButton_Click">
                                     <Grid.ToolTip>
                                         <ToolTip Content="{loc:Loc HomeChangeContactListLayout}" />
                                     </Grid.ToolTip>
                                     <controls:NineSliceButton Hover="/Aerochat;component/Resources/Message/ToolbarHover.png" Pressed="/Aerochat;component/Resources/Message/ToolbarActive.png" />
                                     <Image Margin="6" Width="16" Height="16" IsHitTestVisible="False" Source="/Aerochat;component/Resources/Home/ChangeLayout.png" />
                                 </Grid>
-                                <Grid>
+                                <Grid PreviewMouseLeftButtonUp="ShowMenuButton_Click">
                                     <Grid.ToolTip>
                                         <ToolTip Content="{loc:Loc HomeShowMenu}" />
                                     </Grid.ToolTip>
@@ -640,7 +642,17 @@
                                                     <MenuItem Header="Remove from Favorites" Click="UnfavoriteMenuItem_Click" />
                                                 </ContextMenu>
                                             </Button.ContextMenu>
-                                            <Grid Height="20" PreviewMouseDown="ItemClick">
+                                            <Grid PreviewMouseDown="ItemClick">
+                                                <Grid.Style>
+                                                    <Style TargetType="Grid">
+                                                        <Setter Property="Height" Value="20" />
+                                                        <Style.Triggers>
+                                                            <DataTrigger Binding="{Binding DataContext.UseAvatarLayout, RelativeSource={RelativeSource Mode=FindAncestor, AncestorType=local:Home}}" Value="True">
+                                                                <Setter Property="Height" Value="52" />
+                                                            </DataTrigger>
+                                                        </Style.Triggers>
+                                                    </Style>
+                                                </Grid.Style>
                                                 <controls:NineSlice Slice="4,4">
                                                     <controls:NineSlice.Style>
                                                         <Style TargetType="controls:NineSlice">
@@ -665,15 +677,28 @@
                                                     </controls:NineSlice.Style>
                                                 </controls:NineSlice>
                                                 <Grid VerticalAlignment="Center">
-                                                    <Grid Margin="16,0">
+                                                    <Grid>
+                                                        <Grid.Style>
+                                                            <Style TargetType="Grid">
+                                                                <Setter Property="Margin" Value="16,0" />
+                                                                <Style.Triggers>
+                                                                    <DataTrigger Binding="{Binding DataContext.UseAvatarLayout, RelativeSource={RelativeSource Mode=FindAncestor, AncestorType=local:Home}}" Value="True">
+                                                                        <Setter Property="Margin" Value="4,4" />
+                                                                    </DataTrigger>
+                                                                </Style.Triggers>
+                                                            </Style>
+                                                        </Grid.Style>
                                                         <Grid.ColumnDefinitions>
-                                                            <ColumnDefinition Width="16" />
+                                                            <ColumnDefinition Width="Auto" />
                                                             <ColumnDefinition Width="*" />
                                                         </Grid.ColumnDefinitions>
+
+                                                        <!-- Compact mode: XSFrame status icon -->
                                                         <Image MouseLeave="MouseExitedUser" MouseEnter="MouseEnteredUser" Grid.Column="0" Width="16" Height="16">
                                                             <Image.Style>
                                                                 <Style TargetType="Image">
                                                                     <Setter Property="Source" Value="/Aerochat;component/Resources/Frames/XSFrameOffline.png" />
+                                                                    <Setter Property="Visibility" Value="Visible" />
                                                                     <Style.Triggers>
                                                                         <DataTrigger Binding="{Binding Presence.Status}" Value="Online">
                                                                             <Setter Property="Source" Value="/Aerochat;component/Resources/Frames/XSFrameActive.png" />
@@ -696,11 +721,47 @@
                                                                         <DataTrigger Binding="{Binding IsGroupChat}" Value="True">
                                                                             <Setter Property="Source" Value="/Aerochat;component/Resources/Frames/XSFrameActiveM.png" />
                                                                         </DataTrigger>
+                                                                        <DataTrigger Binding="{Binding DataContext.UseAvatarLayout, RelativeSource={RelativeSource Mode=FindAncestor, AncestorType=local:Home}}" Value="True">
+                                                                            <Setter Property="Visibility" Value="Collapsed" />
+                                                                        </DataTrigger>
                                                                     </Style.Triggers>
                                                                 </Style>
                                                             </Image.Style>
                                                         </Image>
-                                                        <DockPanel HorizontalAlignment="Stretch" Grid.Column="1">
+
+                                                        <!-- Avatar mode: ProfilePictureFrame with avatar image -->
+                                                        <controls:ProfilePictureFrame
+                                                            Grid.Column="0"
+                                                            FrameSize="Small"
+                                                            EnableAnimation="False"
+                                                            ProfilePicture="{Binding AvatarUrl, Converter={StaticResource imageConverter}}"
+                                                            Margin="0,0,4,0">
+                                                            <controls:ProfilePictureFrame.Style>
+                                                                <Style TargetType="controls:ProfilePictureFrame">
+                                                                    <Setter Property="Visibility" Value="Collapsed" />
+                                                                    <!-- Default to Online so guild items (Presence.Status="") always show the green frame -->
+                                                                    <Setter Property="UserStatus" Value="Online" />
+                                                                    <Style.Triggers>
+                                                                        <DataTrigger Binding="{Binding DataContext.UseAvatarLayout, RelativeSource={RelativeSource Mode=FindAncestor, AncestorType=local:Home}}" Value="True">
+                                                                            <Setter Property="Visibility" Value="Visible" />
+                                                                        </DataTrigger>
+                                                                        <DataTrigger Binding="{Binding Presence.Status}" Value="Offline">
+                                                                            <Setter Property="UserStatus" Value="Offline" />
+                                                                        </DataTrigger>
+                                                                        <DataTrigger Binding="{Binding Presence.Status}" Value="Idle">
+                                                                            <Setter Property="UserStatus" Value="Idle" />
+                                                                        </DataTrigger>
+                                                                        <DataTrigger Binding="{Binding Presence.Status}" Value="DoNotDisturb">
+                                                                            <Setter Property="UserStatus" Value="DoNotDisturb" />
+                                                                        </DataTrigger>
+                                                                        <DataTrigger Binding="{Binding Presence.Status}" Value="Invisible">
+                                                                            <Setter Property="UserStatus" Value="Invisible" />
+                                                                        </DataTrigger>
+                                                                    </Style.Triggers>
+                                                                </Style>
+                                                            </controls:ProfilePictureFrame.Style>
+                                                        </controls:ProfilePictureFrame>
+                                                        <DockPanel HorizontalAlignment="Stretch" VerticalAlignment="Center" Grid.Column="1">
                                                             <DockPanel.ToolTip>
                                                                 <ToolTip Content="{Binding Name}" />
                                                             </DockPanel.ToolTip>

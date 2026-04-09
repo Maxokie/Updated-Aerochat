@@ -53,6 +53,7 @@ namespace Aerochat.ViewModels
             private ulong _id;
             private bool _isGroupChat;
             private int _recipientCount;
+            private string _avatarUrl = "";
 
             public string Name
             {
@@ -106,6 +107,12 @@ namespace Aerochat.ViewModels
             {
                 get => _recipientCount;
                 set => SetProperty(ref _recipientCount, value);
+            }
+
+            public string AvatarUrl
+            {
+                get => _avatarUrl;
+                set => SetProperty(ref _avatarUrl, value);
             }
 
             public ObservableCollection<DiscordUser> Recipients { get; } = new();

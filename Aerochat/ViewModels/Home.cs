@@ -57,6 +57,13 @@ namespace Aerochat.ViewModels
             set => SetProperty(ref _showEyecandy, value);
         }
 
+        private bool _useAvatarLayout = false;
+        public bool UseAvatarLayout
+        {
+            get => _useAvatarLayout;
+            set => SetProperty(ref _useAvatarLayout, value);
+        }
+
         private string _searchText = "";
         public string SearchText
         {

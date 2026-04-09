@@ -199,6 +199,8 @@ namespace Aerochat.Controls
 
         private BitmapImage? FrameToSource(UserStatus status, ProfileFrameSize size)
         {
+            if (size == ProfileFrameSize.Unknown) return null;
+
             string sizeString = size switch
             {
                 ProfileFrameSize.ExtraSmall => "XS",
@@ -232,7 +234,6 @@ namespace Aerochat.Controls
                 }; BeginAnimation(ProfilePictureFrame.OpacityProperty, opacityAnimation);
             }
 
-            if (source is null) throw new ArgumentException("Invalid frame size or status.");
             return source;
         }
 

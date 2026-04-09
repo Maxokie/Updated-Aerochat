@@ -11,6 +11,8 @@ using System.Threading.Tasks;
 
 namespace Aerochat.Voice
 {
+    public enum DmCallState { None, Ringing, Connected }
+
     public class VoiceManager : ViewModelBase
     {
         public static VoiceManager Instance = new();
@@ -32,6 +34,20 @@ namespace Aerochat.Voice
         public event EventHandler<(ulong UserId, bool IsSpeaking)> UserSpeakingChanged;
         public event EventHandler<bool> ClientSpeakingChanged;
 
+        private DmCallState _currentDmCallState = DmCallState.None;
+        public DmCallState CurrentDmCallState
+        {
+            get => _currentDmCallState;
+            set { _currentDmCallState = value; OnPropertyChanged(); }
+        }
+
+        private UserViewModel? _dmCallRecipient;
+        public UserViewModel? DmCallRecipient
+        {
+            get => _dmCallRecipient;
+            set { _dmCallRecipient = value; OnPropertyChanged(); }
+        }
+
         private readonly ConcurrentDictionary<ulong, float> _userVolumes = new();
         private readonly ConcurrentDictionary<ulong, bool> _userMuted = new();
 
@@ -47,10 +63,11 @@ namespace Aerochat.Voice
             set { if (voiceSocket != null) voiceSocket.SelfDeafened = value; }
         }
 
+        private float _clientTransmitVolume = 1.0f;
         public float ClientTransmitVolume
         {
-            get => voiceSocket?.Player.ClientTransmitVolume ?? 1.0f;
-            set { if (voiceSocket != null) voiceSocket.Player.ClientTransmitVolume = value; }
+            get => _clientTransmitVolume;
+            set => _clientTransmitVolume = value;
         }
 
         public void SetUserVolume(ulong userId, float volume)
@@ -78,25 +95,19 @@ namespace Aerochat.Voice
         private IEnumerable<uint> GetSsrcsForUser(ulong userId)
         {
             if (voiceSocket == null) return Array.Empty<uint>();
-            return voiceSocket.SsrcToUserId
+            return voiceSocket.UserSSRCMap
                 .Where(kvp => kvp.Value == userId)
                 .Select(kvp => kvp.Key);
         }
 
         private void ApplyVolumeForUser(ulong userId)
         {
-            if (voiceSocket == null) return;
-            float vol = _userVolumes.TryGetValue(userId, out var v) ? v : 1.0f;
-            foreach (var ssrc in GetSsrcsForUser(userId))
-                voiceSocket.Player.SetSsrcVolume(ssrc, vol);
+            // Volume control not yet supported with the native audio backend.
         }
 
         private void ApplyMuteForUser(ulong userId)
         {
-            if (voiceSocket == null) return;
-            bool muted = _userMuted.TryGetValue(userId, out var m) && m;
-            foreach (var ssrc in GetSsrcsForUser(userId))
-                voiceSocket.Player.SetSsrcMuted(ssrc, muted);
+            // Mute control not yet supported with the native audio backend.
         }
 
         public async Task LeaveVoiceChannel()
@@ -107,14 +118,24 @@ namespace Aerochat.Voice
             await voiceSocket.DisconnectAndDispose();
             voiceSocket = null;
             ChannelVM = null;
+            CurrentDmCallState = DmCallState.None;
+            DmCallRecipient = null;
         }
 
         public async Task JoinVoiceChannel(DiscordChannel channel, Action<VoiceStateChanged> onStateChange)
         {
             await LeaveVoiceChannel();
-            voiceSocket = new(Discord.Client, onStateChange);
+            voiceSocket = new(Discord.Client, (e) =>
+            {
+                onStateChange(e);
+                if (voiceSocket?.UserSSRCMap.TryGetValue(e.SSRC, out ulong userId) == true)
+                {
+                    UserSpeakingChanged?.Invoke(this, (userId, e.Speaking));
+                    if (userId == Discord.Client.CurrentUser.Id)
+                        ClientSpeakingChanged?.Invoke(this, e.Speaking);
+                }
+            });
             await voiceSocket.ConnectAsync(channel);
-            voiceSocket.Recorder.SetInputDevice(Settings.SettingsManager.Instance.InputDeviceIndex);
             ChannelVM = ChannelViewModel.FromChannel(channel);
         }
 

@@ -89,6 +89,10 @@
   "ChatUnknownError": "Erreur inconnue.",
   "ChatServerUnavailable": "Serveur indisponible",
   "ChatErrorUnauthorized": "Requête non autorisée. Vérifiez votre jeton et réessayez.",
+  "ChatErrorMissingAccess": "Vous n'avez plus accès à ce salon ou ce serveur. Il a peut-être été supprimé ou vous en avez été retiré. Le salon a été supprimé de votre historique récent.",
+  "ChatCallServerOnly": "Pour appeler quelqu'un, vous devez démarrer l'appel en messages privés.",
+  "ChatCallRinging": "Appel de {0}...",
+  "ChatCallConnected": "Connecté · {0:00}:{1:00}",
   "ChatErrorUnknown": "Une erreur inconnue s'est produite. Veuillez réessayer.",
   "ChatErrorServerError": "Ce serveur est actuellement indisponible. Veuillez réessayer plus tard.",
 
@@ -243,5 +247,11 @@
   "TitlebarBasic": "Toujours utiliser la barre de titre basique de secours",
 
   "TimeFormat24Hour": "Horloge 24 heures",
-  "TimeFormat12Hour": "Horloge 12 heures (AM/PM)"
+  "TimeFormat12Hour": "Horloge 12 heures (AM/PM)",
+
+  "VoiceMenuProfile": "Voir le profil",
+  "VoiceMenuMute": "Couper le micro",
+  "VoiceMenuDeafen": "Se rendre sourd",
+  "VoiceMenuMicVolume": "Volume du microphone",
+  "VoiceMenuVolume": "Volume"
 }

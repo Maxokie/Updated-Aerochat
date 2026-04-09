@@ -79,9 +79,8 @@ namespace Aerochat.ViewModels
             }, true),
             new(LocalizationManager.Instance["ChatToolbarCall"], (FrameworkElement itemElement) =>
             {
-                Debug.WriteLine("Call clicked");
-               OnUmimplementedAction(itemElement);
-            }, true, LocalizationManager.Instance["ChatToolbarCallTooltip"]),
+                (Window.GetWindow(itemElement) as Chat)?.HandleCallButtonClick();
+            }, false, LocalizationManager.Instance["ChatToolbarCallTooltip"]),
             new(LocalizationManager.Instance["ChatToolbarGames"], (FrameworkElement itemElement) =>
             {
                 Debug.WriteLine("Games clicked");
@@ -133,6 +132,13 @@ namespace Aerochat.ViewModels
         }
 
         public ObservableCollection<MessageViewModel> Messages { get; set; } = new();
+
+        private string _callStatusText = "";
+        public string CallStatusText
+        {
+            get => _callStatusText;
+            set => SetProperty(ref _callStatusText, value);
+        }
 
         private int _topHeight = 80;
 

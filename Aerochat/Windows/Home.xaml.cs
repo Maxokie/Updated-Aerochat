@@ -97,9 +97,6 @@ namespace Aerochat.Windows
                 // Subscribe to changes in the DisplayAds property
                 SettingsManager.Instance.PropertyChanged += OnSettingsChange;
 
-                await Task.Delay(1000);
-                Chat chat = new(1287027740452716606);
-                chat.Show();
             });
         }
 
@@ -745,7 +742,7 @@ namespace Aerochat.Windows
 
                         if (channelsList.Count == 0) continue;
 
-                        CreateAndInsertGuild(guild.Name, channelsList[0].Id, index);
+                        CreateAndInsertGuild(guild.Name, channelsList[0].Id, index, guild.IconUrl ?? "");
                         processedGuilds.Add(guildId);
                     }
                 }
@@ -770,17 +767,18 @@ namespace Aerochat.Windows
 
                 channelsList.Sort((x, y) => x.Position.CompareTo(y.Position));
 
-                CreateAndInsertGuild(guild.Name, channelsList.ElementAtOrDefault(0)?.Id ?? 0, 2);
+                CreateAndInsertGuild(guild.Name, channelsList.ElementAtOrDefault(0)?.Id ?? 0, 2, guild.IconUrl ?? "");
             }
             UpdateUnreadMessages();
         }
 
-        private void CreateAndInsertGuild(string name, ulong guildId, int categoryIndex)
+        private void CreateAndInsertGuild(string name, ulong guildId, int categoryIndex, string iconUrl = "")
         {
             var guildItem = new HomeListItemViewModel
             {
                 Name = name,
                 Image="/Aerochat;component/Resources/Frames/XSFrameIdleM.png",
+                AvatarUrl = iconUrl,
                 Presence = new PresenceViewModel
                 {
                     Presence = "",
@@ -879,6 +877,7 @@ namespace Aerochat.Windows
                         IsSelected = existingItem?.IsSelected ?? false,
                         IsGroupChat = isGroupChat,
                         RecipientCount = dm.Recipients.Count + 1, // to account for ourselves, i think?
+                        AvatarUrl = isGroupChat ? "" : (recipient.AvatarUrl ?? recipient.DefaultAvatarUrl ?? ""),
                     };
 
                     if (dm?.Recipients is not null) foreach (DiscordUser user in dm.Recipients)
@@ -915,6 +914,7 @@ namespace Aerochat.Windows
                         existingItem.LastMsgId = newItem.LastMsgId;
                         existingItem.IsSelected = newItem.IsSelected;
                         existingItem.Presence = newItem.Presence;
+                        existingItem.AvatarUrl = newItem.AvatarUrl;
                     }
                     else
                     {
@@ -1281,6 +1281,79 @@ namespace Aerochat.Windows
         {
             Settings settings = new();
             settings.ShowDialog();
+        }
+
+        private void ChangeLayoutButton_Click(object sender, MouseButtonEventArgs e)
+        {
+            ViewModel.UseAvatarLayout = !ViewModel.UseAvatarLayout;
+        }
+
+        private void ShowMenuButton_Click(object sender, MouseButtonEventArgs e)
+        {
+            var element = (FrameworkElement)sender;
+
+            MenuItem MakeItem(string header, RoutedEventHandler? onClick = null, bool isEnabled = true)
+            {
+                var item = new MenuItem { Header = header, IsEnabled = isEnabled };
+                if (onClick != null) item.Click += onClick;
+                return item;
+            }
+
+            var menu = new ContextMenu();
+
+            // File
+            var fileMenu = MakeItem("File");
+            fileMenu.Items.Add(MakeItem("Send an Instant Message", isEnabled: false));
+            fileMenu.Items.Add(MakeItem("Open Received Files", isEnabled: false));
+            fileMenu.Items.Add(new Separator());
+            fileMenu.Items.Add(MakeItem("Sign Out", (_, _) => _ = ((App)Application.Current).SignOut()));
+            fileMenu.Items.Add(new Separator());
+            fileMenu.Items.Add(MakeItem("Close", (_, _) => Application.Current.Shutdown()));
+            menu.Items.Add(fileMenu);
+
+            // Edit
+            var editMenu = MakeItem("Edit");
+            editMenu.Items.Add(MakeItem("Find a Contact or Phone Number...", isEnabled: false));
+            editMenu.Items.Add(new Separator());
+            editMenu.Items.Add(MakeItem("Copy My Contact Address", isEnabled: false));
+            editMenu.Items.Add(MakeItem("Select All", isEnabled: false));
+            menu.Items.Add(editMenu);
+
+            // View
+            var viewMenu = MakeItem("View");
+            var layoutItem = MakeItem(ViewModel.UseAvatarLayout ? "Switch to Compact View" : "Switch to Avatar View",
+                (_, _) => ViewModel.UseAvatarLayout = !ViewModel.UseAvatarLayout);
+            viewMenu.Items.Add(layoutItem);
+            viewMenu.Items.Add(new Separator());
+            viewMenu.Items.Add(MakeItem("Sort Contacts by Name", isEnabled: false));
+            viewMenu.Items.Add(MakeItem("Sort Contacts by Status", isEnabled: false));
+            menu.Items.Add(viewMenu);
+
+            // Actions
+            var actionsMenu = MakeItem("Actions");
+            actionsMenu.Items.Add(MakeItem("Send an Instant Message", isEnabled: false));
+            actionsMenu.Items.Add(MakeItem("Send a File or Photo", isEnabled: false));
+            actionsMenu.Items.Add(new Separator());
+            actionsMenu.Items.Add(MakeItem("View Profile", isEnabled: false));
+            menu.Items.Add(actionsMenu);
+
+            // Tools
+            var toolsMenu = MakeItem("Tools");
+            toolsMenu.Items.Add(MakeItem("Audio and Video Setup", isEnabled: false));
+            toolsMenu.Items.Add(new Separator());
+            toolsMenu.Items.Add(MakeItem("Options", (_, _) => { var s = new Settings(); s.ShowDialog(); }));
+            menu.Items.Add(toolsMenu);
+
+            // Help
+            var helpMenu = MakeItem("?");
+            helpMenu.Items.Add(MakeItem("Aerochat Help", isEnabled: false));
+            helpMenu.Items.Add(new Separator());
+            helpMenu.Items.Add(MakeItem("About Aerochat", (s, _) => CreditsBtn_Click(s, new RoutedEventArgs())));
+            menu.Items.Add(helpMenu);
+
+            menu.PlacementTarget = element;
+            menu.Placement = System.Windows.Controls.Primitives.PlacementMode.Bottom;
+            menu.IsOpen = true;
         }
 
         private void Button_Click(object sender, RoutedEventArgs e)

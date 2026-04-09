@@ -129,13 +129,13 @@ namespace Aerochat.Windows
                     if (attribute != null)
                     {
                         var displayNames = attribute.GetDisplayNames();
-                        
+                        var currentIndex = (int)(prop.GetValue(SettingsManager.Instance) ?? 0);
                         settings.Add(new SettingViewModel
                         {
                             Key = prop.GetCustomAttribute<SettingsAttribute>()!.DisplayName,
                             Name = TranslateSettingName(prop),
-                            Type = prop.PropertyType.Name,
-                            DefaultValue = displayNames.ElementAtOrDefault(SettingsManager.Instance.InputDeviceIndex) ?? LocalizationManager.Instance["SettingsUnknownDevice"],
+                            Type = "MultiStringInt",
+                            DefaultValue = displayNames.ElementAtOrDefault(currentIndex) ?? LocalizationManager.Instance["SettingsUnknownDevice"],
                             StringValues = new ObservableCollection<string>(displayNames),
                         });
                     }

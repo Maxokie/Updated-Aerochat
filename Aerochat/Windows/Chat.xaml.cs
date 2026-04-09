@@ -47,6 +47,7 @@ namespace Aerochat.Windows
     {
         public string Text { get; set; } = text;
         public string ToolTip { get; set; } = hint;
+        public bool IsEyecandy { get; } = isEyecandy;
 
         public delegate void ToolbarItemAction(FrameworkElement itemElement);
 
@@ -67,6 +68,8 @@ namespace Aerochat.Windows
         private PresenceViewModel? _initialPresence = null;
         private HomeListItemViewModel? _openingItem = null;
         private readonly ChatService _chatService;
+        private DispatcherTimer? _callDurationTimer;
+        private DateTime _dmCallConnectedAt;
 
         public ObservableCollection<DiscordUser> TypingUsers { get; } = new();
         public ChatWindowViewModel ViewModel { get; set; } = new ChatWindowViewModel();
@@ -542,7 +545,30 @@ namespace Aerochat.Windows
             }
             catch (UnauthorizedException e)
             {
-                _ = Application.Current.Dispatcher.BeginInvoke(() => ShowErrorDialog(LocalizationManager.Instance["ChatErrorUnauthorized"] + "\n\nTechnical details: " + e.WebResponse.Response));
+                bool isMissingAccess = e.WebResponse?.Response?.Contains("50001") == true;
+                if (isMissingAccess)
+                {
+                    // Remove the inaccessible channel/guild from saved state so it isn't
+                    // reopened automatically on the next startup.
+                    var keysToRemove = SettingsManager.Instance.SelectedChannels
+                        .Where(kvp => kvp.Value == ChannelId || kvp.Key == ChannelId)
+                        .Select(kvp => kvp.Key)
+                        .ToList();
+                    foreach (var key in keysToRemove)
+                        SettingsManager.Instance.SelectedChannels.Remove(key);
+                    SettingsManager.Instance.RecentDMChats.Remove(ChannelId);
+                    SettingsManager.Instance.RecentServerChats.Remove(ViewModel.Guild?.Id ?? 0);
+                    SettingsManager.Save();
+
+                    _ = Application.Current.Dispatcher.BeginInvoke(() =>
+                    {
+                        ShowErrorDialog(LocalizationManager.Instance["ChatErrorMissingAccess"]);
+                    });
+                }
+                else
+                {
+                    _ = Application.Current.Dispatcher.BeginInvoke(() => ShowErrorDialog(LocalizationManager.Instance["ChatErrorUnauthorized"] + "\n\nTechnical details: " + e.WebResponse.Response));
+                }
             }
             catch (Exception e)
             {
@@ -847,86 +873,6 @@ namespace Aerochat.Windows
             Close();
         }
 
-
-
-            if (allowDefault)
-            {
-                SettingsManager.Instance.SelectedChannels.TryGetValue(id, out ulong channelId);
-                if (Discord.Client.TryGetCachedChannel(channelId, out DiscordChannel channel))
-                {
-                    ChannelId = id;
-                }
-                else
-                {
-                    // get the key of `id` in the dictionary
-                    var key = SettingsManager.Instance.SelectedChannels.FirstOrDefault(x => x.Value == id).Key;
-                    if (Discord.Client.TryGetCachedGuild(key, out DiscordGuild guild))
-                    {
-                        // get the first channel in the guild
-                        var firstChannel = guild.Channels.Values.FirstOrDefault(x => x.Type == ChannelType.Text && x.PermissionsFor(guild.CurrentMember).HasPermission(Permissions.AccessChannels));
-                        if (firstChannel is not null)
-                        {
-                            ChannelId = firstChannel.Id;
-                        }
-                        else
-                        {
-                            UnavailableDialog();
-                            return;
-                        }
-                    }
-                }
-            }
-
-            if (ChannelId == 0)
-            {
-                ChannelId = id;
-            }
-
-
-            InitializeComponent();
-            DataContext = ViewModel;
-
-            // Ensure that visual elements that aren't supposed to be initially
-            // displayed are not initially displayed:
-            HideReplyView();
-            HideAttachmentsEditor(true);
-
-            Task.Run(BeginDiscordLoop);
-            chatSoundPlayer.MediaOpened += (sender, args) =>
-            {
-                chatSoundPlayer.Play();
-            };
-            ViewModel.Messages.CollectionChanged += UpdateHiddenInfo;
-            TypingUsers.CollectionChanged += TypingUsers_CollectionChanged;
-
-            // (iL - 20.12.2024) Subscribe to settings changes for live update
-            SettingsManager.Instance.PropertyChanged += OnSettingsChanged;
-
-            Closing += Chat_Closing;
-            Loaded += Chat_Loaded;
-            Discord.Client.TypingStarted += OnType;
-            Discord.Client.MessageCreated += OnMessageCreation;
-            Discord.Client.MessageDeleted += OnMessageDeleted;
-            Discord.Client.MessageUpdated += OnMessageUpdated;
-            Discord.Client.ChannelCreated += OnChannelCreated;
-            Discord.Client.ChannelDeleted += OnChannelDeleted;
-            Discord.Client.ChannelUpdated += OnChannelUpdated;
-            Discord.Client.PresenceUpdated += OnPresenceUpdated;
-            Discord.Client.VoiceStateUpdated += OnVoiceStateUpdated;
-            DrawingCanvas.Strokes.StrokesChanged += Strokes_StrokesChanged;
-
-            CommandManager.AddPreviewCanExecuteHandler(MessageTextBox, MessageTextBox_OnPreviewCanExecute);
-            CommandManager.AddPreviewExecutedHandler(MessageTextBox, MessageTextBox_OnPreviewExecuted);
-
-            PreviewKeyDown += Chat_PreviewKeyDown;
-            KeyDown += Chat_KeyDown;
-
-            PART_AttachmentsEditor.ViewModel.Attachments.CollectionChanged
-                += OnAttachmentsEditorAttachmentsUpdated;
-
-            RefreshAerochatVersionLinkVisibility();
-        }
-
         private void Chat_KeyDown(object sender, KeyEventArgs e)
         {
             if (e.KeyboardDevice.Modifiers == ModifierKeys.Control)
@@ -1082,10 +1028,29 @@ namespace Aerochat.Windows
                         else if (left && beforeId == myChannel.Id)
                             Dispatcher.BeginInvoke(() => chatSoundPlayer.Open(SoundHelper.GetSoundUri("leavecall.wav")));
                     }
+
+                    // DM call: detect when the remote user joins or leaves our call channel
+                    if (Channel is DiscordDmChannel dmChannel)
+                    {
+                        bool isRecipient = dmChannel.Recipients.Any(r => r.Id == args.User.Id);
+                        if (isRecipient)
+                        {
+                            if (joined && afterId == Channel.Id &&
+                                VoiceManager.Instance.CurrentDmCallState == DmCallState.Ringing)
+                            {
+                                Dispatcher.BeginInvoke(OnDmCallConnected);
+                            }
+                            else if (left && beforeId == Channel.Id &&
+                                     VoiceManager.Instance.CurrentDmCallState == DmCallState.Connected)
+                            {
+                                Dispatcher.BeginInvoke(async () => await VoiceManager.Instance.LeaveVoiceChannel());
+                            }
+                        }
+                    }
                 }
             }
 
-            if (args.Guild.Id == Channel.Guild?.Id)
+            if (args.Guild != null && args.Guild.Id == Channel.Guild?.Id)
                 Dispatcher.BeginInvoke(RefreshChannelList);
         }
 
@@ -1113,6 +1078,70 @@ namespace Aerochat.Windows
                     }
                 }
             }
+        }
+
+        private void VoiceUser_RightClick(object sender, MouseButtonEventArgs e)
+        {
+            if (sender is not FrameworkElement element || element.DataContext is not UserViewModel user) return;
+            VoiceUserContextMenu_Open(sender, e);
+        }
+
+        private void CallParticipant_RightClick(object sender, MouseButtonEventArgs e)
+        {
+            var recipient = VoiceManager.Instance.DmCallRecipient;
+            if (recipient == null || sender is not FrameworkElement element) return;
+
+            bool isMe = recipient.Id == Discord.Client.CurrentUser.Id;
+            ShowVoiceContextMenu(recipient, isMe, element, e);
+        }
+
+        public void HandleCallButtonClick()
+        {
+            if (Channel is DiscordDmChannel)
+            {
+                if (VoiceManager.Instance.ChannelVM != null)
+                    return;
+                Task.Run(StartDmCall);
+            }
+            else
+            {
+                ShowErrorDialog(LocalizationManager.Instance["ChatCallServerOnly"]);
+            }
+        }
+
+        private async Task StartDmCall()
+        {
+            if (Channel is not DiscordDmChannel dmChannel) return;
+            var recipient = dmChannel.Recipients.FirstOrDefault();
+            if (recipient == null) return;
+
+            var recipientVm = UserViewModel.FromUser(recipient);
+            VoiceManager.Instance.DmCallRecipient = recipientVm;
+            VoiceManager.Instance.CurrentDmCallState = DmCallState.Ringing;
+
+            await Dispatcher.InvokeAsync(() =>
+                ViewModel.CallStatusText = string.Format(LocalizationManager.Instance["ChatCallRinging"], recipient.DisplayName));
+
+            await VoiceManager.Instance.JoinVoiceChannel(Channel, (_) => { });
+        }
+
+        private void OnDmCallConnected()
+        {
+            _dmCallConnectedAt = DateTime.Now;
+            VoiceManager.Instance.CurrentDmCallState = DmCallState.Connected;
+
+            _callDurationTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
+            _callDurationTimer.Tick += (_, _) =>
+            {
+                var elapsed = DateTime.Now - _dmCallConnectedAt;
+                ViewModel.CallStatusText = string.Format(
+                    LocalizationManager.Instance["ChatCallConnected"],
+                    (int)elapsed.TotalMinutes,
+                    elapsed.Seconds);
+            };
+            _callDurationTimer.Start();
+            ViewModel.CallStatusText = string.Format(
+                LocalizationManager.Instance["ChatCallConnected"], 0, 0);
         }
 
         private async Task OnPresenceUpdated(DiscordClient sender, DSharpPlus.EventArgs.PresenceUpdateEventArgs args)
@@ -1996,6 +2025,9 @@ namespace Aerochat.Windows
 
         private async void LeaveCallButton_PreviewMouseLeftButtonUp(object sender, MouseButtonEventArgs e)
         {
+            _callDurationTimer?.Stop();
+            _callDurationTimer = null;
+            ViewModel.CallStatusText = "";
             await VoiceManager.Instance.LeaveVoiceChannel();
         }
 
@@ -2004,8 +2036,12 @@ namespace Aerochat.Windows
             var border = sender as FrameworkElement;
             if (border?.DataContext is not UserViewModel user) return;
 
-            var currentUser = _chatService.GetCurrentUser().Result;
-            bool isMe = user.Id == currentUser.Id;
+            bool isMe = user.Id == Discord.Client.CurrentUser.Id;
+            ShowVoiceContextMenu(user, isMe, border!, e);
+        }
+
+        private void ShowVoiceContextMenu(UserViewModel user, bool isMe, FrameworkElement anchor, MouseButtonEventArgs e)
+        {
 
             var menu = new ContextMenu();
 
@@ -2063,7 +2099,7 @@ namespace Aerochat.Windows
             }
             menu.Items.Add(volumeMenu);
 
-            menu.PlacementTarget = border;
+            menu.PlacementTarget = anchor;
             menu.IsOpen = true;
             e.Handled = true;
         }
