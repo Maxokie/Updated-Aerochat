@@ -79,8 +79,9 @@ namespace Aerochat.ViewModels
             }, true),
             new(LocalizationManager.Instance["ChatToolbarCall"], (FrameworkElement itemElement) =>
             {
-                (Window.GetWindow(itemElement) as Chat)?.HandleCallButtonClick();
-            }, false, LocalizationManager.Instance["ChatToolbarCallTooltip"]),
+                Debug.WriteLine("Call clicked");
+               OnUmimplementedAction(itemElement);
+            }, true, LocalizationManager.Instance["ChatToolbarCallTooltip"]),
             new(LocalizationManager.Instance["ChatToolbarGames"], (FrameworkElement itemElement) =>
             {
                 Debug.WriteLine("Games clicked");

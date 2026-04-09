@@ -134,8 +134,8 @@ namespace Aerochat.Windows
                         {
                             Key = prop.GetCustomAttribute<SettingsAttribute>()!.DisplayName,
                             Name = TranslateSettingName(prop),
-                            Type = "MultiStringInt",
-                            DefaultValue = displayNames.ElementAtOrDefault(currentIndex) ?? LocalizationManager.Instance["SettingsUnknownDevice"],
+                            Type = prop.PropertyType.Name,
+                            DefaultValue = displayNames.ElementAtOrDefault(SettingsManager.Instance.InputDeviceIndex) ?? LocalizationManager.Instance["SettingsUnknownDevice"],
                             StringValues = new ObservableCollection<string>(displayNames),
                         });
                     }

@@ -20,7 +20,13 @@ namespace Aerochat.ViewModels
         private SceneViewModel? _scene;
         private string? _color = "#525252";
         private string? _image;
-        private bool _isSpeaking = false;
+        private bool _isSpeaking;
+
+        public bool IsSpeaking
+        {
+            get => _isSpeaking;
+            set => SetProperty(ref _isSpeaking, value);
+        }
 
         public required string Name
         {

@@ -149,8 +149,14 @@ namespace Aerovoice.Clients
         private bool _disposed = false;
         private VoiceSession? _session;
 
-        //private BaseCrypt cryptor;
-        private string _serverSdp;
+        public NAudioPlayer Player = new NAudioPlayer();
+        public IDecoder Decoder = new OpusDotNetDecoder();
+        public IEncoder Encoder = new ConcentusEncoder();
+        public BaseRecorder Recorder = new NAudioRecorder();
+        public string? ForceEncryptionName;
+
+        private BaseCrypt cryptor;
+        private byte[] _secretKey;
         private int _sequence;
         private string _sessionId;
         private string _voiceToken;
@@ -193,34 +199,25 @@ namespace Aerovoice.Clients
             _timer.AutoReset = true;
             _timer.Elapsed += (s, e) => _timestamp.Increment(3840);
             _timer.Start();
-            _onStateChange = onStateChange;
-            _cb = new VoiceUserCallback(InternalVoiceCallback);
+
+            _speakingDecayTimer = new();
+            _speakingDecayTimer.Interval = 150;
+            _speakingDecayTimer.AutoReset = true;
+            _speakingDecayTimer.Elapsed += SpeakingDecayTimer_Elapsed;
+            _speakingDecayTimer.Start();
         }
 
-        private void InternalVoiceCallback(uint ssrc, bool speaking)
+        private void SpeakingDecayTimer_Elapsed(object? sender, ElapsedEventArgs e)
         {
-            _onStateChange(new VoiceStateChanged(ssrc, speaking));
-            if (ssrc != _ssrc || _socket == null)
+            var now = DateTime.UtcNow;
+            foreach (var kvp in _lastSpeakingTime)
             {
-                return;
-            }
-
-            Debug.WriteLine(speaking);
-
-            Task.Run(async () =>
-            {
-                var msg = new
+                if ((now - kvp.Value).TotalMilliseconds > SpeakingTimeoutMs)
                 {
-                    op = 5,
-                    d = new
-                    {
-                        speaking = speaking ? 1 : 0,
-                        delay = 0,
-                        ssrc
-                    }
-                };
-                await SendMessage(JObject.FromObject(msg));
-            });
+                    if (_lastSpeakingTime.TryRemove(kvp.Key, out _))
+                        UserSpeakingChanged?.Invoke(this, (kvp.Key, false));
+                }
+            }
         }
 
         public async Task SendMessage(JObject message)
@@ -276,78 +273,196 @@ namespace Aerovoice.Clients
             switch (op)
             {
                 case 2: // ready
+                {
+                    _ready = message["d"]!.Value<JObject>()!;
+                    var ip = _ready["ip"]!.Value<string>()!;
+                    var port = _ready["port"]!.Value<ushort>();
+                    _ssrc = _ready["ssrc"]!.Value<uint>();
+                    var modes = _ready["modes"]!.ToArray().Select(x => x.Value<string>()!);
+                    _availableEncryptionModes = modes.ToList();
+                    Logger.Log($"Attempting to open UDP connection to {ip}:{port}.");
+                    Logger.Log($"Your SSRC is {_ssrc}.");
+                    UdpClient = new(ip, port);
+                    UdpClient.MessageReceived += (s, e) => Task.Run(() => UdpClient_MessageReceived(s, e));
+
+                    var discoveryPacket = ConstructPortScanPacket(_ssrc, ip, port);
+
+                    UdpClient.SendMessage(discoveryPacket);
+                    break;
+                }
+                case 4: // session description
+                {
+                    var secretKey = message["d"]!["secret_key"]!.Value<JArray>()!.Select(x => (byte)x.Value<int>()).ToArray();
+                    _secretKey = secretKey;
+                    if (cryptor is null)
                     {
-                        _ready = message["d"]!.Value<JObject>()!;
-                        var ip = _ready["ip"]!.Value<string>()!;
-                        var port = _ready["port"]!.Value<ushort>();
-                        _ssrc = _ready["ssrc"]!.Value<uint>();
-                        _userSsrcMap.Add(_ssrc, _client.CurrentUser.Id);
-                        var modes = _ready["modes"]!.ToArray().Select(x => x.Value<string>()!);
-                        Logger.Log($"Attempting to open UDP connection to {ip}:{port}.");
-                        Logger.Log($"Your SSRC is {_ssrc}.");
-                        _session = new VoiceSession(_ssrc, this.Channel.Id, ip, port, _cb);
-                        var discovered = _session.DiscoverIP();
-                        Debug.WriteLine($"IP: {discovered.Address}");
-                        Debug.WriteLine($"Port: {discovered.Port}");
-                        var cryptor = _session.SelectCryptor([.. modes]);
-                        if (cryptor == null) return;
-                        var msg = new
+                        cryptor = GetPreferredEncryption();
+                    }
+                    break;
+                }
+                case 5: // speaking
+                {
+                    var d = message["d"]!;
+                    var userId = d["user_id"]!.Value<ulong>();
+                    var ssrc = d["ssrc"]!.Value<uint>();
+                    SsrcToUserId[ssrc] = userId;
+                    break;
+                }
+            }
+        }
+
+        private readonly SortedList<uint, byte[]> _packetBuffer = new();
+        private readonly object _bufferLock = new();
+        private uint _lastPlayedTimestamp = 0;
+        private const int BUFFER_THRESHOLD = 5;
+
+        private async Task UdpClient_MessageReceived(object? sender, byte[] e)
+        {
+            byte packetType = e[1];
+            switch (packetType)
+            {
+                case 0x2: // ip discovery
+                {
+                    var address = Encoding.UTF8.GetString(e, 8, 64).TrimEnd('\0');
+                    var port = (ushort)IPAddress.NetworkToHostOrder(BitConverter.ToInt16(e, 72));
+                    Logger.Log($"IP discovery was successful, your port is {port}.");
+                    if (cryptor is null)
+                    {
+                        cryptor = GetPreferredEncryption();
+                    }
+                    await SendMessage(JObject.FromObject(new
+                    {
+                        op = 1,
+                        d = new
                         {
-                            op = 1,
-                            d = new
+                            protocol = "udp",
+                            data = new
                             {
-                                protocol = "udp",
-                                data = new
+                                address,
+                                port,
+                                mode = cryptor.PName
+                            },
+                            codecs = new[]
+        {
+                                new
                                 {
-                                    address = discovered.Address,
-                                    port = discovered.Port,
-                                    mode = cryptor
-                                },
-                                codecs = new[]
-                                {
-                                    new
-                                    {
-                                        name = "opus",
-                                        type = "audio",
-                                        priority = 1000,
-                                        payload_type = 109,
-                                    }
+                                    name = "opus",
+                                    type = "audio",
+                                    priority = 1000,
+                                    payload_type = 120
                                 }
                             }
-                        };
-
-                        await SendMessage(JObject.FromObject(msg));
-                        break;
-                    }
-                case 4: // session description
+                        }
+                    }));
+                    Recorder.Start();
+                    break;
+                }
+                case 0x78:
+                {
+                    // TODO: thread manager where each user gets one thread
+                    await Task.Run(() =>
                     {
-                        //var serverSdp = message["d"]!["sdp"]!.Value<string>()!;
-                        //_serverSdp = serverSdp;
-                        //_session.SetServerSdp(_serverSdp);
-                        var secret = message["d"]!["secret_key"]!.Value<JArray>()!.Select(x => (byte)x.Value<int>()).ToArray();
-                        _session?.SetSecret(secret);
-                        _session?.BeginPolling();
-                        var msg = new
+                        if (cryptor is null || _secretKey is null) return;
+
+                        var rtpTimestamp = BinaryPrimitives.ReadUInt32BigEndian(e.AsSpan(4));
+                        lock (_bufferLock)
                         {
-                            op = 5,
-                            d = new
-                            {
-                                speaking = 0,
-                                delay = 0,
-                                ssrc = _ssrc
-                            }
-                        };
-                        await SendMessage(JObject.FromObject(msg));
-                        break;
-                    }
-                case 5: // speaking
+                            _packetBuffer[rtpTimestamp] = e;
+                        }
+
+                        TryProcessBufferedPackets();
+                    });
+                    break;
+                }
+            }
+        }
+
+        private void TryProcessBufferedPackets()
+        {
+            lock (_bufferLock)
+            {
+                if (_packetBuffer.Count < BUFFER_THRESHOLD)
+                    return;
+
+                foreach (var key in _packetBuffer.Keys.ToList())
+                {
+                    if (key > _lastPlayedTimestamp)
                     {
-                        var userId = ulong.Parse(message["d"]!["user_id"]!.Value<string>()!);
-                        var ssrc = message["d"]!["ssrc"]!.Value<uint>()!;
+                        byte[] packet = _packetBuffer[key];
+                        _packetBuffer.Remove(key);
+                        _lastPlayedTimestamp = key;
 
-                        _userSsrcMap.Remove(ssrc);
-                        _userSsrcMap.Add(ssrc, userId);
+                        ProcessPacket(packet);
+                    }
+                }
+            }
+        }
 
+        private void ProcessPacket(byte[] e)
+        {
+            if (SelfDeafened) return;
+
+            var ssrc = BinaryPrimitives.ReadUInt32BigEndian(e.AsSpan(8));
+
+            if (Player.IsSsrcMuted(ssrc)) return;
+
+            byte[] decryptedData = cryptor.Decrypt(e, _secretKey);
+            if (decryptedData.Length == 0) return;
+            ushort increment = BinaryPrimitives.ReadUInt16BigEndian(e.AsSpan(2));
+            var decoded = Decoder.Decode(decryptedData, decryptedData.Length, out int decodedLength, ssrc, increment);
+
+            var userId = GetUserIdFromSsrc(ssrc);
+            if (userId != 0)
+            {
+                double rms = ComputeRms(decoded, decodedLength);
+                if (rms >= IncomingRmsThreshold)
+                {
+                    bool wasNew = !_lastSpeakingTime.ContainsKey(userId);
+                    _lastSpeakingTime[userId] = DateTime.UtcNow;
+                    if (wasNew)
+                        UserSpeakingChanged?.Invoke(this, (userId, true));
+                }
+            }
+
+            Player.AddSamples(decoded, decodedLength, ssrc);
+        }
+
+        private static double ComputeRms(byte[] pcm, int length)
+        {
+            int samples = length / 2;
+            double sum = 0;
+            for (int i = 0; i < length - 1; i += 2)
+            {
+                short sample = (short)((pcm[i + 1] << 8) | pcm[i]);
+                sum += sample * sample;
+            }
+            return Math.Sqrt(sum / samples);
+        }
+
+        public BaseCrypt GetPreferredEncryption()
+        {
+            var decryptors = typeof(BaseCrypt).Assembly.GetTypes().Where(x => x.Namespace == "Aerovoice.Crypts" && x.IsSubclassOf(typeof(BaseCrypt)) && _availableEncryptionModes.Contains((string)x.GetProperty("Name")!.GetValue(null)!));
+            var priority = new[] { "aead_aes256_gcm_rtpsize", "aead_xchacha20_poly1305_rtpsize" };
+            BaseCrypt? decryptor = null;
+            if (ForceEncryptionName != null)
+            {
+                var forced = decryptors.FirstOrDefault(x => x.GetProperty("Name")!.GetValue(null)!.Equals(ForceEncryptionName));
+                if (forced != null)
+                {
+                    decryptor = (BaseCrypt)Activator.CreateInstance(forced)!;
+                } else
+                {
+                    Logger.Log($"\"{ForceEncryptionName}\" is not supported, falling back to default.");
+                }
+            }
+            if (decryptor == null)
+            {
+                foreach (var p in priority)
+                {
+                    var d = decryptors.FirstOrDefault(x => x.GetProperty("Name")!.GetValue(null)!.Equals(p));
+                    if (d != null && _availableEncryptionModes.Contains(p))
+                    {
+                        decryptor = (BaseCrypt)Activator.CreateInstance(d)!;
                         break;
                     }
             }
@@ -360,7 +475,130 @@ namespace Aerovoice.Clients
             await _client.UpdateVoiceStateAsync(Channel.Guild?.Id ?? Channel.Id, Channel.Id, false, false);
             _client.VoiceStateUpdated += _client_VoiceStateUpdated;
             _client.VoiceServerUpdated += _client_VoiceServerUpdated;
+            Recorder.DataAvailable += Recorder_DataAvailable;
         }
+
+        private short _udpSequence = (short)new Random().Next(0, short.MaxValue);
+
+        private const int BufferDurationMs = 200;
+        private const int ChunkDurationMs = 20;
+        private const int SampleRate = 48000; // 48kHz
+        private const int BytesPerSample = 2; // 16-bit PCM
+        private const int Channels = 2; // Stereo
+        private const int BufferSizeBytes = (SampleRate * Channels * BytesPerSample * BufferDurationMs) / 1000; // 38400 bytes
+        private byte[] _circularBuffer = new byte[BufferSizeBytes];
+        private int _bufferOffset = 0;
+        private bool _bufferFilled = false;
+
+        private async void Recorder_DataAvailable(object? sender, byte[] e)
+        {
+            await Task.Run(() =>
+            {
+                AddToCircularBuffer(e);
+
+                var sampleIsSpeaking = IsSpeaking(_circularBuffer, _bufferFilled ? BufferSizeBytes : _bufferOffset);
+
+                if (sampleIsSpeaking || SelfMuted)
+                {
+                    if (Speaking)
+                    {
+                        _ = SendMessage(JObject.FromObject(new
+                        {
+                            op = 5,
+                            d = new
+                            {
+                                speaking = 0,
+                                delay = 0,
+                                ssrc = _ssrc
+                            }
+                        }));
+                        Speaking = false;
+                        ClientSpeakingChanged?.Invoke(this, false);
+                    }
+                    return;
+                }
+
+                if (!Speaking)
+                {
+                    _ = SendMessage(JObject.FromObject(new
+                    {
+                        op = 5,
+                        d = new
+                        {
+                            speaking = 1 << 0,
+                            delay = 0,
+                            ssrc = _ssrc
+                        }
+                    }));
+                    Speaking = true;
+                    ClientSpeakingChanged?.Invoke(this, true);
+                }
+
+                if (cryptor is null) return;
+
+                byte[] toEncode = e;
+                float vol = Player.ClientTransmitVolume;
+                if (Math.Abs(vol - 1.0f) > 0.01f)
+                    toEncode = ScalePcm(e, vol);
+
+                var opus = Encoder.Encode(toEncode);
+                var header = new byte[12];
+                header[0] = 0x80;
+                header[1] = 0x78;
+                BinaryPrimitives.WriteInt16BigEndian(header.AsSpan(2), _udpSequence++);
+                BinaryPrimitives.WriteUInt32BigEndian(header.AsSpan(4), _timestamp.GetCurrentTimestamp());
+                BinaryPrimitives.WriteUInt32BigEndian(header.AsSpan(8), _ssrc);
+                var packet = new byte[header.Length + opus.Length];
+                Array.Copy(header, 0, packet, 0, header.Length);
+                Array.Copy(opus, 0, packet, header.Length, opus.Length);
+                var encrypted = cryptor.Encrypt(packet, _secretKey);
+                UdpClient.SendMessage(encrypted);
+            });
+        }
+
+        private static byte[] ScalePcm(byte[] pcm, float volume)
+        {
+            var result = new byte[pcm.Length];
+            for (int i = 0; i < pcm.Length - 1; i += 2)
+            {
+                short sample = (short)((pcm[i + 1] << 8) | pcm[i]);
+                int scaled = (int)(sample * volume);
+                scaled = Math.Clamp(scaled, short.MinValue, short.MaxValue);
+                result[i] = (byte)(scaled & 0xFF);
+                result[i + 1] = (byte)((scaled >> 8) & 0xFF);
+            }
+            return result;
+        }
+
+        private void AddToCircularBuffer(byte[] data)
+        {
+            int dataLength = data.Length;
+
+            if (_bufferOffset + dataLength > BufferSizeBytes)
+            {
+                int overflow = _bufferOffset + dataLength - BufferSizeBytes;
+                Array.Copy(data, 0, _circularBuffer, _bufferOffset, dataLength - overflow);
+                Array.Copy(data, dataLength - overflow, _circularBuffer, 0, overflow);
+                _bufferOffset = overflow;
+                _bufferFilled = true;
+            }
+            else
+            {
+                Array.Copy(data, 0, _circularBuffer, _bufferOffset, dataLength);
+                _bufferOffset += dataLength;
+            }
+        }
+
+        private bool IsSpeaking(byte[] buffer, int length)
+        {
+            int samples = length / BytesPerSample; // Convert byte length to number of samples
+            double sum = 0;
+
+            for (int i = 0; i < length; i += 2)
+            {
+                short sample = (short)((buffer[i + 1] << 8) | buffer[i]); // Convert to 16-bit sample
+                sum += sample * sample;
+            }
 
         private async Task _client_VoiceStateUpdated(DiscordClient sender, DSharpPlus.EventArgs.VoiceStateUpdateEventArgs args)
         {
@@ -424,7 +662,8 @@ namespace Aerovoice.Clients
             await _client.UpdateVoiceStateAsync(Channel.GuildId, null, false, false);
             _socket?.Dispose();
             _timer.Dispose();
-            _session?.Dispose();
+            _speakingDecayTimer.Dispose();
+            Encoder?.Dispose();
         }
     }
 }

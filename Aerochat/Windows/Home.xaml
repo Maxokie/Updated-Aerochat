@@ -394,6 +394,29 @@
                                                                     </Style>
                                                                 </TextBlock.Style>
                                                             </TextBlock>
+                                                            <TextBlock x:Name="PART_StatusPlaceholder" Text="{loc:Loc HomeShareQuickMessage}" Margin="6,2,6,4" Panel.ZIndex="4" IsHitTestVisible="False">
+                                                                <TextBlock.Style>
+                                                                    <Style TargetType="TextBlock">
+                                                                        <Setter Property="Visibility" Value="Collapsed" />
+                                                                        <Setter Property="Foreground" Value="{Binding Theme.Scene.TextColor}" />
+                                                                        <Setter Property="Opacity" Value="0.5" />
+                                                                        <Style.Triggers>
+                                                                            <DataTrigger Binding="{Binding Theme.Scene.Default}" Value="True">
+                                                                                <Setter Property="Foreground" Value="#555" />
+                                                                            </DataTrigger>
+                                                                            <MultiDataTrigger>
+                                                                                <MultiDataTrigger.Conditions>
+                                                                                    <Condition Binding="{Binding CurrentUser.Presence.CustomStatus}" Value="{x:Null}" />
+                                                                                    <Condition Binding="{Binding IsEditingStatus}" Value="False" />
+                                                                                </MultiDataTrigger.Conditions>
+                                                                                <MultiDataTrigger.Setters>
+                                                                                    <Setter Property="Visibility" Value="Visible" />
+                                                                                </MultiDataTrigger.Setters>
+                                                                            </MultiDataTrigger>
+                                                                        </Style.Triggers>
+                                                                    </Style>
+                                                                </TextBlock.Style>
+                                                            </TextBlock>
                                                             <controls:ColorizedNineSlice TintColor="{Binding Theme.Scene.Color}" Image="/Aerochat;component/Resources/Home/StatusTextBoxBg.png" Slice="3, 3" Margin="6,2,6,4">
                                                                 <controls:ColorizedNineSlice.Style>
                                                                     <Style TargetType="controls:ColorizedNineSlice">

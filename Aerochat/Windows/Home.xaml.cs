@@ -1111,6 +1111,67 @@ namespace Aerochat.Windows
             return target?.DataContext as HomeListItemViewModel;
         }
 
+        private void ItemContextMenu_Opening(object sender, ContextMenuEventArgs e)
+        {
+            if (sender is not Button button || button.DataContext is not HomeListItemViewModel listItem)
+                return;
+            var contextMenu = button.ContextMenu;
+            if (contextMenu?.Items.Count != 2) return;
+            var favoriteItem = contextMenu.Items[0] as MenuItem;
+            var unfavoriteItem = contextMenu.Items[1] as MenuItem;
+            if (favoriteItem == null || unfavoriteItem == null) return;
+            // Use Id comparison: Favorites category contains clones, so reference equality would be wrong
+            var inFavorites = ViewModel.Categories.Count > 0 && ViewModel.Categories[0].Items.Any(i => i.Id == listItem.Id);
+            var alreadyFavorited = SettingsManager.Instance.FavoriteConversationIds.Contains(listItem.Id)
+                || SettingsManager.Instance.FavoriteGuildIds.Contains(listItem.Id);
+            favoriteItem.Visibility = inFavorites || alreadyFavorited ? Visibility.Collapsed : Visibility.Visible;
+            unfavoriteItem.Visibility = inFavorites || alreadyFavorited ? Visibility.Visible : Visibility.Collapsed;
+        }
+
+        private void FavoriteMenuItem_Click(object sender, RoutedEventArgs e)
+        {
+            var item = GetListItemFromContextMenuSender(sender);
+            if (item == null) return;
+            // Category 0 = Favorites, 1 = Conversations, 2+ = Servers/folders
+            var inConversations = ViewModel.Categories.Count > 1 && ViewModel.Categories[1].Items.Contains(item);
+            if (inConversations)
+            {
+                if (!SettingsManager.Instance.FavoriteConversationIds.Contains(item.Id))
+                {
+                    SettingsManager.Instance.FavoriteConversationIds.Add(item.Id);
+                    SettingsManager.Save();
+                    RefreshFavoritesCategory();
+                }
+            }
+            else
+            {
+                if (!SettingsManager.Instance.FavoriteGuildIds.Contains(item.Id))
+                {
+                    SettingsManager.Instance.FavoriteGuildIds.Add(item.Id);
+                    SettingsManager.Save();
+                    RefreshFavoritesCategory();
+                }
+            }
+        }
+
+        private void UnfavoriteMenuItem_Click(object sender, RoutedEventArgs e)
+        {
+            var item = GetListItemFromContextMenuSender(sender);
+            if (item == null) return;
+            SettingsManager.Instance.FavoriteConversationIds.Remove(item.Id);
+            SettingsManager.Instance.FavoriteGuildIds.Remove(item.Id);
+            SettingsManager.Save();
+            RefreshFavoritesCategory();
+        }
+
+        private static HomeListItemViewModel? GetListItemFromContextMenuSender(object sender)
+        {
+            if (sender is not MenuItem menuItem) return null;
+            var contextMenu = menuItem.Parent as ContextMenu;
+            var target = contextMenu?.PlacementTarget as Button;
+            return target?.DataContext as HomeListItemViewModel;
+        }
+
         private async void Button_MouseDoubleClick(object sender, MouseButtonEventArgs e)
         {
             var item = (HomeListItemViewModel)((Button)sender).DataContext;
