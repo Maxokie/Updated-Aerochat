@@ -229,7 +229,6 @@
   "SettingNudgeIntensity": "Intensité du Wizz",
   "SettingNudgeLength": "Durée du Wizz",
   "SettingGoIdleWithFullscreenProgram": "Passer mon statut en \"absent\" quand j'ouvre une application en plein écran",
-  "SettingDisplayUnimplementedButtons": "Afficher les boutons non implémentés pour la déco",
   "SettingBasicTitlebar": "Configurer quand utiliser la barre de titre basique non native",
   "SettingXPCaptionButtons": "Utiliser le thème de boutons de fenêtre Windows XP dans la barre de titre non native",
   "SettingHighlightMentions": "Mettre en évidence les messages qui vous mentionnent",

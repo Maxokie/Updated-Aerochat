@@ -7,16 +7,42 @@ namespace Aerochat.Helpers
 {
     public class ImageConverter : IValueConverter
     {
+        private const string DefaultAvatarPackUri =
+            "pack://application:,,,/Aerochat;component/Resources/Frames/DefaultAvatar.png";
+
+        private static BitmapImage? _defaultAvatar;
+        private static BitmapImage DefaultAvatar
+        {
+            get
+            {
+                if (_defaultAvatar == null)
+                {
+                    _defaultAvatar = new BitmapImage(new Uri(DefaultAvatarPackUri));
+                    _defaultAvatar.Freeze();
+                }
+                return _defaultAvatar;
+            }
+        }
+
         public object Convert(object value, Type targetType, object parameter, CultureInfo culture)
         {
             if (value is null)
-                return DependencyProperty.UnsetValue;
-            else if (value is string)
+                return DefaultAvatar;
+
+            if (value is string uri)
             {
-                var uri = value as string;
-                if (uri is null || string.IsNullOrWhiteSpace(uri)) return DependencyProperty.UnsetValue;
-                return new BitmapImage(new Uri(uri));
+                if (string.IsNullOrWhiteSpace(uri))
+                    return DefaultAvatar;
+                try
+                {
+                    return new BitmapImage(new Uri(uri));
+                }
+                catch
+                {
+                    return DefaultAvatar;
+                }
             }
+
             return value;
         }
 

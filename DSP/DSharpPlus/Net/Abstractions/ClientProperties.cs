@@ -23,8 +23,11 @@
 
 using System;
 using System.Globalization;
+using System.Net.Http;
 using System.Reflection;
 using System.Runtime.InteropServices;
+using System.Text.RegularExpressions;
+using System.Threading.Tasks;
 using Newtonsoft.Json;
 
 namespace DSharpPlus.Net.Abstractions
@@ -34,6 +37,42 @@ namespace DSharpPlus.Net.Abstractions
     /// </summary>
     internal sealed class ClientProperties
     {
+        private static volatile int _cachedBuildNumber = 0;
+
+        /// <summary>
+        /// Fetches the current Discord client build number from the web app and caches it.
+        /// Falls back to the last known-good hardcoded value if the fetch fails.
+        /// </summary>
+        internal static async Task FetchBuildNumberAsync()
+        {
+            if (_cachedBuildNumber > 0)
+                return;
+
+            try
+            {
+                using var http = new HttpClient();
+                http.DefaultRequestHeaders.Add("User-Agent",
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36");
+                http.Timeout = TimeSpan.FromSeconds(15);
+
+                var loginHtml = await http.GetStringAsync("https://discord.com/login").ConfigureAwait(false);
+                var scriptMatches = Regex.Matches(loginHtml, @"<script src=""(/assets/[^""]+\.js)"" defer></script>");
+
+                for (int i = scriptMatches.Count - 1; i >= 0; i--)
+                {
+                    var scriptUrl = "https://discord.com" + scriptMatches[i].Groups[1].Value;
+                    var scriptContent = await http.GetStringAsync(scriptUrl).ConfigureAwait(false);
+                    var match = Regex.Match(scriptContent, @"buildNumber[""']?:\s*[""']?(\d{5,6})[""']?");
+                    if (match.Success && int.TryParse(match.Groups[1].Value, out var buildNum) && buildNum > 100000)
+                    {
+                        _cachedBuildNumber = buildNum;
+                        return;
+                    }
+                }
+            }
+            catch { }
+        }
+
         [JsonProperty("os")]
         public string OperatingSystem
         {
@@ -109,7 +148,7 @@ namespace DSharpPlus.Net.Abstractions
 
         [JsonProperty("client_build_number")]
         public int ClientBuildNumber
-            => 325421;
+            => _cachedBuildNumber > 0 ? _cachedBuildNumber : 325421;
 
         [JsonProperty("client_event_source")]
         public object ClientEventSource

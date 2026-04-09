@@ -1761,6 +1761,20 @@ namespace DSharpPlus.Net
             return this.DoRequestAsync(this._discord, bucket, url, RestRequestMethod.POST, route);
         }
 
+        internal Task RingDmCallAsync(ulong channel_id, IEnumerable<ulong> recipient_ids)
+        {
+            var route = $"{Endpoints.CHANNELS}/:channel_id{Endpoints.CALL}{Endpoints.RING}";
+            var bucket = this._rest.GetBucket(RestRequestMethod.POST, route, new { channel_id }, out var path);
+
+            var payload = JsonConvert.SerializeObject(new
+            {
+                recipients = recipient_ids.Select(id => id.ToString()).ToArray()
+            });
+
+            var url = Utilities.GetApiUriFor(path);
+            return this.DoRequestAsync(this._discord, bucket, url, RestRequestMethod.POST, route, payload: payload);
+        }
+
         internal async Task<IReadOnlyList<DiscordMessage>> GetPinnedMessagesAsync(ulong channel_id)
         {
             var route = $"{Endpoints.CHANNELS}/:channel_id{Endpoints.PINS}";

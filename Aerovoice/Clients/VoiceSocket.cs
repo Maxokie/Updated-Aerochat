@@ -165,6 +165,8 @@ namespace Aerovoice.Clients
         private bool _connected = false;
         private RTPTimestamp _timestamp = new(3840);
         private uint _ssrc = 0;
+        private UDPClient? UdpClient;
+        private List<string> _availableEncryptionModes = new();
         private VoiceUserCallback _cb;
         private Dictionary<uint, ulong> _userSsrcMap = [];
         public Dictionary<uint, ulong> UserSSRCMap { get { return _userSsrcMap; } }
@@ -465,7 +467,9 @@ namespace Aerovoice.Clients
                         decryptor = (BaseCrypt)Activator.CreateInstance(d)!;
                         break;
                     }
+                }
             }
+            return decryptor!;
         }
 
         public async Task ConnectAsync(DiscordChannel channel)
@@ -592,6 +596,7 @@ namespace Aerovoice.Clients
         private bool IsSpeaking(byte[] buffer, int length)
         {
             int samples = length / BytesPerSample; // Convert byte length to number of samples
+            if (samples == 0) return false;
             double sum = 0;
 
             for (int i = 0; i < length; i += 2)
@@ -599,6 +604,9 @@ namespace Aerovoice.Clients
                 short sample = (short)((buffer[i + 1] << 8) | buffer[i]); // Convert to 16-bit sample
                 sum += sample * sample;
             }
+            double rms = Math.Sqrt(sum / samples);
+            return rms > IncomingRmsThreshold;
+        }
 
         private async Task _client_VoiceStateUpdated(DiscordClient sender, DSharpPlus.EventArgs.VoiceStateUpdateEventArgs args)
         {

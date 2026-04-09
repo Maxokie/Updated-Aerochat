@@ -362,6 +362,8 @@ namespace DSharpPlus
                 this.Logger.LogInformation(LoggerEvents.Startup, "DSharpPlus, version {Version}", this.VersionString);
             }
 
+            await this.ApiClient._rest.InitializeSuperPropertiesAsync().ConfigureAwait(false);
+
             while (i-- > 0 || this.Configuration.ReconnectIndefinitely)
             {
                 try
@@ -1003,6 +1005,13 @@ namespace DSharpPlus
             var vsstr = JsonConvert.SerializeObject(vs);
             await _webSocketClient.SendMessageAsync(vsstr);
         }
+
+        /// <summary>
+        /// Rings the specified recipients in a DM voice channel.
+        /// This notifies the recipients that they are being called.
+        /// </summary>
+        public Task RingDmCallAsync(ulong channelId, IEnumerable<ulong> recipientIds)
+            => this.ApiClient.RingDmCallAsync(channelId, recipientIds);
 
         #endregion
 

@@ -53,6 +53,7 @@ namespace Aerovoice.Encoders
         public void Dispose()
         {
             oggWriter.Finish();
+            outputStream.Dispose();
             encoder.Dispose();
         }
     }

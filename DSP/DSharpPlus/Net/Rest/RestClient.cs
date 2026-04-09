@@ -96,6 +96,7 @@ namespace DSharpPlus.Net
 
             this.HttpClient.DefaultRequestHeaders.TryAddWithoutValidation("User-Agent", Utilities.GetUserAgent());
             this.HttpClient.DefaultRequestHeaders.TryAddWithoutValidation("X-Super-Properties", Convert.ToBase64String(Encoding.UTF8.GetBytes(JsonConvert.SerializeObject(new ClientProperties()))));
+            this.HttpClient.DefaultRequestHeaders.TryAddWithoutValidation("X-Discord-Locale", System.Globalization.CultureInfo.CurrentCulture.Name);
 
             this.RoutesToHashes = new ConcurrentDictionary<string, string>();
             this.HashesToBuckets = new ConcurrentDictionary<string, RateLimitBucket>();
@@ -105,6 +106,29 @@ namespace DSharpPlus.Net
             this.UseResetAfter = useRelativeRatelimit;
 
             this._captchaHandler = captchaHandler;
+        }
+
+        /// <summary>
+        /// Re-encodes the X-Super-Properties header using the currently cached build number.
+        /// Call after <see cref="ClientProperties.FetchBuildNumberAsync"/> to ensure the header
+        /// reflects the real Discord client build number.
+        /// </summary>
+        internal void RefreshSuperPropertiesHeader()
+        {
+            if (this.HttpClient.DefaultRequestHeaders.Contains("X-Super-Properties"))
+                this.HttpClient.DefaultRequestHeaders.Remove("X-Super-Properties");
+            this.HttpClient.DefaultRequestHeaders.TryAddWithoutValidation("X-Super-Properties",
+                Convert.ToBase64String(Encoding.UTF8.GetBytes(JsonConvert.SerializeObject(new ClientProperties()))));
+        }
+
+        /// <summary>
+        /// Fetches the current Discord build number and refreshes the X-Super-Properties header.
+        /// Should be awaited once before the first request is made.
+        /// </summary>
+        internal async Task InitializeSuperPropertiesAsync()
+        {
+            await ClientProperties.FetchBuildNumberAsync().ConfigureAwait(false);
+            this.RefreshSuperPropertiesHeader();
         }
 
         public RateLimitBucket GetBucket(RestRequestMethod method, string route, object route_params, out string url)

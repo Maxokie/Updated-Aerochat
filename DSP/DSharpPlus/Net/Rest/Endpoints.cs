@@ -96,5 +96,7 @@ namespace DSharpPlus.Net
         public const string PROFILE = "/profile";
         public const string ATTACHMENTS = "/attachments";
         public const string SETTINGS_PROTO = "/settings-proto";
+        public const string CALL = "/call";
+        public const string RING = "/ring";
     }
 }

@@ -230,7 +230,6 @@
   "SettingNudgeIntensity": "Nudge intensity",
   "SettingNudgeLength": "Nudge length",
   "SettingGoIdleWithFullscreenProgram": "Make my status go \"away\" when I open a fullscreen application",
-  "SettingDisplayUnimplementedButtons": "Display unimplemented buttons for eyecandy",
   "SettingBasicTitlebar": "Configure when to use the non-native basic titlebar fallback",
   "SettingXPCaptionButtons": "Use the Windows XP caption button theme in non-native titlebar",
   "SettingHighlightMentions": "Highlight messages that have mentioned you",

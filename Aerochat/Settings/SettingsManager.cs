@@ -228,9 +228,6 @@ namespace Aerochat.Settings
         [Settings("Activity", "Make my status go \"away\" when I open a fullscreen application")]
         public bool GoIdleWithFullscreenProgram  { get; set; } = true;
 
-        [Settings("Appearance", "Display unimplemented buttons for eyecandy")]
-        public bool DisplayUnimplementedButtons { get; set; } = false;
-
         [Settings("Appearance", "Configure when to use the non-native basic titlebar fallback")]
         public BasicTitlebarSetting BasicTitlebar { get; set; } = BasicTitlebarSetting.Automatic;
 

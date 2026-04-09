@@ -1111,67 +1111,6 @@ namespace Aerochat.Windows
             return target?.DataContext as HomeListItemViewModel;
         }
 
-        private void ItemContextMenu_Opening(object sender, ContextMenuEventArgs e)
-        {
-            if (sender is not Button button || button.DataContext is not HomeListItemViewModel listItem)
-                return;
-            var contextMenu = button.ContextMenu;
-            if (contextMenu?.Items.Count != 2) return;
-            var favoriteItem = contextMenu.Items[0] as MenuItem;
-            var unfavoriteItem = contextMenu.Items[1] as MenuItem;
-            if (favoriteItem == null || unfavoriteItem == null) return;
-            // Use Id comparison: Favorites category contains clones, so reference equality would be wrong
-            var inFavorites = ViewModel.Categories.Count > 0 && ViewModel.Categories[0].Items.Any(i => i.Id == listItem.Id);
-            var alreadyFavorited = SettingsManager.Instance.FavoriteConversationIds.Contains(listItem.Id)
-                || SettingsManager.Instance.FavoriteGuildIds.Contains(listItem.Id);
-            favoriteItem.Visibility = inFavorites || alreadyFavorited ? Visibility.Collapsed : Visibility.Visible;
-            unfavoriteItem.Visibility = inFavorites || alreadyFavorited ? Visibility.Visible : Visibility.Collapsed;
-        }
-
-        private void FavoriteMenuItem_Click(object sender, RoutedEventArgs e)
-        {
-            var item = GetListItemFromContextMenuSender(sender);
-            if (item == null) return;
-            // Category 0 = Favorites, 1 = Conversations, 2+ = Servers/folders
-            var inConversations = ViewModel.Categories.Count > 1 && ViewModel.Categories[1].Items.Contains(item);
-            if (inConversations)
-            {
-                if (!SettingsManager.Instance.FavoriteConversationIds.Contains(item.Id))
-                {
-                    SettingsManager.Instance.FavoriteConversationIds.Add(item.Id);
-                    SettingsManager.Save();
-                    RefreshFavoritesCategory();
-                }
-            }
-            else
-            {
-                if (!SettingsManager.Instance.FavoriteGuildIds.Contains(item.Id))
-                {
-                    SettingsManager.Instance.FavoriteGuildIds.Add(item.Id);
-                    SettingsManager.Save();
-                    RefreshFavoritesCategory();
-                }
-            }
-        }
-
-        private void UnfavoriteMenuItem_Click(object sender, RoutedEventArgs e)
-        {
-            var item = GetListItemFromContextMenuSender(sender);
-            if (item == null) return;
-            SettingsManager.Instance.FavoriteConversationIds.Remove(item.Id);
-            SettingsManager.Instance.FavoriteGuildIds.Remove(item.Id);
-            SettingsManager.Save();
-            RefreshFavoritesCategory();
-        }
-
-        private static HomeListItemViewModel? GetListItemFromContextMenuSender(object sender)
-        {
-            if (sender is not MenuItem menuItem) return null;
-            var contextMenu = menuItem.Parent as ContextMenu;
-            var target = contextMenu?.PlacementTarget as Button;
-            return target?.DataContext as HomeListItemViewModel;
-        }
-
         private async void Button_MouseDoubleClick(object sender, MouseButtonEventArgs e)
         {
             var item = (HomeListItemViewModel)((Button)sender).DataContext;
@@ -1226,26 +1165,18 @@ namespace Aerochat.Windows
                 frameworkElement = VisualTreeHelper.GetParent(frameworkElement) as FrameworkElement;
             _lastHoveredControl = (Button)frameworkElement;
 
-            // Entire menu here is completely unimplemented, so we don't bother with it.
-            if (SettingsManager.Instance.DisplayUnimplementedButtons)
-            {
-                _hoverTimer.Stop();
-                _hoverTimer.Start();
-                tooltip?.StopKillTimer();
-            }
+            _hoverTimer.Stop();
+            _hoverTimer.Start();
+            tooltip?.StopKillTimer();
         }
 
         private void MouseExitedUser(object sender, MouseEventArgs e)
         {
-            // grab the control which the user has exited
             var frameworkElement = sender as FrameworkElement;
             if (frameworkElement?.DataContext is HomeListItemViewModel item)
             {
-                if (SettingsManager.Instance.DisplayUnimplementedButtons)
-                {
-                    _hoverTimer.Stop();
-                    tooltip?.StartKillTimer();
-                }
+                _hoverTimer.Stop();
+                tooltip?.StartKillTimer();
             }
         }
 
@@ -1349,6 +1280,33 @@ namespace Aerochat.Windows
             ViewModel.UseAvatarLayout = !ViewModel.UseAvatarLayout;
         }
 
+        private void ShowUnimplementedDialog()
+        {
+            var loc = LocalizationManager.Instance;
+            var dialog = new Dialog(
+                loc["ChatToolbarErrorTitle"],
+                loc["ChatToolbarErrorUnimplemented"],
+                SystemIcons.Error
+            );
+            dialog.Owner = this;
+            dialog.ShowDialog();
+        }
+
+        private void MailButton_Click(object sender, MouseButtonEventArgs e)
+        {
+            ShowUnimplementedDialog();
+        }
+
+        private void AddContactButton_Click(object sender, MouseButtonEventArgs e)
+        {
+            ShowUnimplementedDialog();
+        }
+
+        private void UnimplementedMenuItem_Click(object sender, RoutedEventArgs e)
+        {
+            ShowUnimplementedDialog();
+        }
+
         private void ShowMenuButton_Click(object sender, MouseButtonEventArgs e)
         {
             var element = (FrameworkElement)sender;
@@ -1360,12 +1318,14 @@ namespace Aerochat.Windows
                 return item;
             }
 
+            RoutedEventHandler unimplemented = (_, _) => ShowUnimplementedDialog();
+
             var menu = new ContextMenu();
 
             // File
             var fileMenu = MakeItem("File");
-            fileMenu.Items.Add(MakeItem("Send an Instant Message", isEnabled: false));
-            fileMenu.Items.Add(MakeItem("Open Received Files", isEnabled: false));
+            fileMenu.Items.Add(MakeItem("Send an Instant Message", unimplemented));
+            fileMenu.Items.Add(MakeItem("Open Received Files", unimplemented));
             fileMenu.Items.Add(new Separator());
             fileMenu.Items.Add(MakeItem("Sign Out", (_, _) => _ = ((App)Application.Current).SignOut()));
             fileMenu.Items.Add(new Separator());
@@ -1374,10 +1334,10 @@ namespace Aerochat.Windows
 
             // Edit
             var editMenu = MakeItem("Edit");
-            editMenu.Items.Add(MakeItem("Find a Contact or Phone Number...", isEnabled: false));
+            editMenu.Items.Add(MakeItem("Find a Contact or Phone Number...", unimplemented));
             editMenu.Items.Add(new Separator());
-            editMenu.Items.Add(MakeItem("Copy My Contact Address", isEnabled: false));
-            editMenu.Items.Add(MakeItem("Select All", isEnabled: false));
+            editMenu.Items.Add(MakeItem("Copy My Contact Address", unimplemented));
+            editMenu.Items.Add(MakeItem("Select All", unimplemented));
             menu.Items.Add(editMenu);
 
             // View
@@ -1386,28 +1346,28 @@ namespace Aerochat.Windows
                 (_, _) => ViewModel.UseAvatarLayout = !ViewModel.UseAvatarLayout);
             viewMenu.Items.Add(layoutItem);
             viewMenu.Items.Add(new Separator());
-            viewMenu.Items.Add(MakeItem("Sort Contacts by Name", isEnabled: false));
-            viewMenu.Items.Add(MakeItem("Sort Contacts by Status", isEnabled: false));
+            viewMenu.Items.Add(MakeItem("Sort Contacts by Name", unimplemented));
+            viewMenu.Items.Add(MakeItem("Sort Contacts by Status", unimplemented));
             menu.Items.Add(viewMenu);
 
             // Actions
             var actionsMenu = MakeItem("Actions");
-            actionsMenu.Items.Add(MakeItem("Send an Instant Message", isEnabled: false));
-            actionsMenu.Items.Add(MakeItem("Send a File or Photo", isEnabled: false));
+            actionsMenu.Items.Add(MakeItem("Send an Instant Message", unimplemented));
+            actionsMenu.Items.Add(MakeItem("Send a File or Photo", unimplemented));
             actionsMenu.Items.Add(new Separator());
-            actionsMenu.Items.Add(MakeItem("View Profile", isEnabled: false));
+            actionsMenu.Items.Add(MakeItem("View Profile", unimplemented));
             menu.Items.Add(actionsMenu);
 
             // Tools
             var toolsMenu = MakeItem("Tools");
-            toolsMenu.Items.Add(MakeItem("Audio and Video Setup", isEnabled: false));
+            toolsMenu.Items.Add(MakeItem("Audio and Video Setup", unimplemented));
             toolsMenu.Items.Add(new Separator());
             toolsMenu.Items.Add(MakeItem("Options", (_, _) => { var s = new Settings(); s.ShowDialog(); }));
             menu.Items.Add(toolsMenu);
 
             // Help
             var helpMenu = MakeItem("?");
-            helpMenu.Items.Add(MakeItem("Aerochat Help", isEnabled: false));
+            helpMenu.Items.Add(MakeItem("Aerochat Help", unimplemented));
             helpMenu.Items.Add(new Separator());
             helpMenu.Items.Add(MakeItem("About Aerochat", (s, _) => CreditsBtn_Click(s, new RoutedEventArgs())));
             menu.Items.Add(helpMenu);

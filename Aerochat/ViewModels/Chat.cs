@@ -34,22 +34,6 @@ namespace Aerochat.ViewModels
 
     public class ChatWindowViewModel : ViewModelBase
     {
-        public ChatWindowViewModel()
-        {
-            SettingsManager.Instance.PropertyChanged += OnSettingsChanged;
-        }
-
-        private void OnSettingsChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
-        {
-            if (e.PropertyName == nameof(SettingsManager.Instance.DisplayUnimplementedButtons))
-            {
-                Application.Current.Dispatcher.BeginInvoke(() =>
-                {
-                    ShowEyecandy = SettingsManager.Instance.DisplayUnimplementedButtons;
-                });
-            }
-        }
-
         public List<ToolbarItem> ToolbarItems { get; set; } = new()
         {
             new(LocalizationManager.Instance["ChatToolbarPhotos"], (FrameworkElement itemElement) =>
@@ -79,9 +63,9 @@ namespace Aerochat.ViewModels
             }, true),
             new(LocalizationManager.Instance["ChatToolbarCall"], (FrameworkElement itemElement) =>
             {
-                Debug.WriteLine("Call clicked");
-               OnUmimplementedAction(itemElement);
-            }, true, LocalizationManager.Instance["ChatToolbarCallTooltip"]),
+                Chat? chat = Window.GetWindow(itemElement) as Chat;
+                chat?.HandleCallButtonClick();
+            }, false, LocalizationManager.Instance["ChatToolbarCallTooltip"]),
             new(LocalizationManager.Instance["ChatToolbarGames"], (FrameworkElement itemElement) =>
             {
                 Debug.WriteLine("Games clicked");
@@ -143,7 +127,7 @@ namespace Aerochat.ViewModels
 
         private int _topHeight = 80;
 
-        private bool _showEyecandy = SettingsManager.Instance.DisplayUnimplementedButtons;
+        private bool _showEyecandy = true;
 
         public bool ShowEyecandy
         {

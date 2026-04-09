@@ -1123,6 +1123,9 @@ namespace Aerochat.Windows
                 ViewModel.CallStatusText = string.Format(LocalizationManager.Instance["ChatCallRinging"], recipient.DisplayName));
 
             await VoiceManager.Instance.JoinVoiceChannel(Channel, (_) => { });
+
+            // Notify Discord to ring the recipient so their client shows an incoming call
+            await Discord.Client.RingDmCallAsync(dmChannel.Id, dmChannel.Recipients.Select(r => r.Id));
         }
 
         private void OnDmCallConnected()
@@ -2051,10 +2054,18 @@ namespace Aerochat.Windows
 
             bool isMuted = isMe ? VoiceManager.Instance.SelfMuted : VoiceManager.Instance.IsUserMuted(user.Id);
             var muteItem = new MenuItem { Header = isMuted ? "Unmute" : "Mute", IsCheckable = false };
-            muteItem.Click += (s, _) =>
+            muteItem.Click += async (s, _) =>
             {
                 if (isMe)
+                {
                     VoiceManager.Instance.SelfMuted = !VoiceManager.Instance.SelfMuted;
+                    var ch = VoiceManager.Instance.Channel;
+                    if (ch != null)
+                        await Discord.Client.UpdateVoiceStateAsync(
+                            ch.Guild?.Id ?? ch.Id, ch.Id,
+                            VoiceManager.Instance.SelfMuted,
+                            VoiceManager.Instance.SelfDeafened);
+                }
                 else
                     VoiceManager.Instance.SetUserMuted(user.Id, !VoiceManager.Instance.IsUserMuted(user.Id));
             };
@@ -2064,9 +2075,15 @@ namespace Aerochat.Windows
             {
                 bool isDeafened = VoiceManager.Instance.SelfDeafened;
                 var deafenItem = new MenuItem { Header = isDeafened ? "Undeafen" : "Deafen", IsCheckable = false };
-                deafenItem.Click += (s, _) =>
+                deafenItem.Click += async (s, _) =>
                 {
                     VoiceManager.Instance.SelfDeafened = !VoiceManager.Instance.SelfDeafened;
+                    var ch = VoiceManager.Instance.Channel;
+                    if (ch != null)
+                        await Discord.Client.UpdateVoiceStateAsync(
+                            ch.Guild?.Id ?? ch.Id, ch.Id,
+                            VoiceManager.Instance.SelfMuted,
+                            VoiceManager.Instance.SelfDeafened);
                 };
                 menu.Items.Add(deafenItem);
             }

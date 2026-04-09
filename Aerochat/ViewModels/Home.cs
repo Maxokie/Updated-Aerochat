@@ -35,21 +35,9 @@ namespace Aerochat.ViewModels
                 UpdateFilteredCategories();
             };
 
-            SettingsManager.Instance.PropertyChanged += OnSettingsChanged;
         }
 
-        private void OnSettingsChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
-        {
-            if (e.PropertyName == nameof(SettingsManager.Instance.DisplayUnimplementedButtons))
-            {
-                Application.Current.Dispatcher.BeginInvoke(() =>
-                {
-                    ShowEyecandy = SettingsManager.Instance.DisplayUnimplementedButtons;
-                });
-            }
-        }
-
-        private bool _showEyecandy = SettingsManager.Instance.DisplayUnimplementedButtons;
+        private bool _showEyecandy = true;
 
         public bool ShowEyecandy
         {
