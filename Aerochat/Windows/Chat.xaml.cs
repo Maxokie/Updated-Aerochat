@@ -849,6 +849,84 @@ namespace Aerochat.Windows
 
 
 
+            if (allowDefault)
+            {
+                SettingsManager.Instance.SelectedChannels.TryGetValue(id, out ulong channelId);
+                if (Discord.Client.TryGetCachedChannel(channelId, out DiscordChannel channel))
+                {
+                    ChannelId = id;
+                }
+                else
+                {
+                    // get the key of `id` in the dictionary
+                    var key = SettingsManager.Instance.SelectedChannels.FirstOrDefault(x => x.Value == id).Key;
+                    if (Discord.Client.TryGetCachedGuild(key, out DiscordGuild guild))
+                    {
+                        // get the first channel in the guild
+                        var firstChannel = guild.Channels.Values.FirstOrDefault(x => x.Type == ChannelType.Text && x.PermissionsFor(guild.CurrentMember).HasPermission(Permissions.AccessChannels));
+                        if (firstChannel is not null)
+                        {
+                            ChannelId = firstChannel.Id;
+                        }
+                        else
+                        {
+                            UnavailableDialog();
+                            return;
+                        }
+                    }
+                }
+            }
+
+            if (ChannelId == 0)
+            {
+                ChannelId = id;
+            }
+
+
+            InitializeComponent();
+            DataContext = ViewModel;
+
+            // Ensure that visual elements that aren't supposed to be initially
+            // displayed are not initially displayed:
+            HideReplyView();
+            HideAttachmentsEditor(true);
+
+            Task.Run(BeginDiscordLoop);
+            chatSoundPlayer.MediaOpened += (sender, args) =>
+            {
+                chatSoundPlayer.Play();
+            };
+            ViewModel.Messages.CollectionChanged += UpdateHiddenInfo;
+            TypingUsers.CollectionChanged += TypingUsers_CollectionChanged;
+
+            // (iL - 20.12.2024) Subscribe to settings changes for live update
+            SettingsManager.Instance.PropertyChanged += OnSettingsChanged;
+
+            Closing += Chat_Closing;
+            Loaded += Chat_Loaded;
+            Discord.Client.TypingStarted += OnType;
+            Discord.Client.MessageCreated += OnMessageCreation;
+            Discord.Client.MessageDeleted += OnMessageDeleted;
+            Discord.Client.MessageUpdated += OnMessageUpdated;
+            Discord.Client.ChannelCreated += OnChannelCreated;
+            Discord.Client.ChannelDeleted += OnChannelDeleted;
+            Discord.Client.ChannelUpdated += OnChannelUpdated;
+            Discord.Client.PresenceUpdated += OnPresenceUpdated;
+            Discord.Client.VoiceStateUpdated += OnVoiceStateUpdated;
+            DrawingCanvas.Strokes.StrokesChanged += Strokes_StrokesChanged;
+
+            CommandManager.AddPreviewCanExecuteHandler(MessageTextBox, MessageTextBox_OnPreviewCanExecute);
+            CommandManager.AddPreviewExecutedHandler(MessageTextBox, MessageTextBox_OnPreviewExecuted);
+
+            PreviewKeyDown += Chat_PreviewKeyDown;
+            KeyDown += Chat_KeyDown;
+
+            PART_AttachmentsEditor.ViewModel.Attachments.CollectionChanged
+                += OnAttachmentsEditorAttachmentsUpdated;
+
+            RefreshAerochatVersionLinkVisibility();
+        }
+
         private void Chat_KeyDown(object sender, KeyEventArgs e)
         {
             if (e.KeyboardDevice.Modifiers == ModifierKeys.Control)
@@ -1199,7 +1277,7 @@ namespace Aerochat.Windows
             List<DiscordUser> tempUsers = new();
             foreach (var user in TypingUsers.ToList())
             {
-                if (!_chatService.TryGetCachedUser(user.Id, out DiscordUser discordUser))
+                if (!Discord.Client.TryGetCachedUser(user.Id, out DiscordUser discordUser))
                 {
                     // I believe this is fully safe since it'll only occur in a server context,
                     // where all typing users' profiles should be fully accessible.
@@ -1689,7 +1767,26 @@ namespace Aerochat.Windows
                         }
                         try
                         {
-                            await VoiceManager.Instance.JoinVoiceChannel(channel);
+                            await VoiceManager.Instance.JoinVoiceChannel(channel, (e) =>
+                            {
+                                var castedItem = (HomeListItemViewModel)item;
+                                var channelID = castedItem.Id;
+                                Dispatcher.InvokeAsync(() =>
+                                {
+                                    // FIXME: this code sucks
+                                    var category = ViewModel.Categories.ToList().Find(f => f.Items.Any(f => f.Id == channelID));
+                                    if (category == null) return;
+                                    var channel = category.Items.ToList().Find(f => f.Id == channelID);
+                                    if (channel == null) return;
+                                    ulong userID = 0;
+                                    VoiceManager.Instance.VoiceSocket?.UserSSRCMap.TryGetValue(e.SSRC, out userID);
+                                    var user = castedItem.ConnectedUsers.FirstOrDefault(u => u.Id == userID, null!);
+                                    if (user == null) return;
+                                    var index = castedItem.ConnectedUsers.IndexOf(user);
+                                    if (index == -1) return;
+                                    channel.ConnectedUsers[index].IsSpeaking = e.Speaking;
+                                });
+                            });
                         }
                         catch (Exception ex)
                         {
@@ -2275,11 +2372,7 @@ namespace Aerochat.Windows
                 TypingTimer_Elapsed(null, null!);
                 typingTimer.Start();
             }
-
-            /*if (GetMessageBoxText().EndsWith(':')) TODO: Emoji suggestions popup
-            {
-                
-            }*/            
+            ;
         }
 
         private void OnMessageContextMenuOpening(object senderRaw, ContextMenuEventArgs e)

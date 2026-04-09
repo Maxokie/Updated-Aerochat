@@ -20,13 +20,7 @@ namespace Aerochat.ViewModels
         private SceneViewModel? _scene;
         private string? _color = "#525252";
         private string? _image;
-        private bool _isSpeaking;
-
-        public bool IsSpeaking
-        {
-            get => _isSpeaking;
-            set => SetProperty(ref _isSpeaking, value);
-        }
+        private bool _isSpeaking = false;
 
         public required string Name
         {
@@ -71,6 +65,12 @@ namespace Aerochat.ViewModels
         {
             get => _image;
             set => SetProperty(ref _image, value);
+        }
+
+        public bool IsSpeaking
+        {
+            get => _isSpeaking;
+            set => SetProperty(ref _isSpeaking, value);
         }
 
         public static UserViewModel FromUser(DiscordUser user)
