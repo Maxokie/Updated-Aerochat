@@ -62,7 +62,7 @@ namespace Aerochat.Settings
                 // Otherwise, we only set the active path to the application-local path
                 // if the file already exists. This will not affect migration as the
                 // Aerochat 0.2 installer manages migration of 0.1-era configuration.
-                if (Path.Exists(applicationLocalPath))
+                if (System.IO.File.Exists(applicationLocalPath) || System.IO.Directory.Exists(applicationLocalPath))
                 {
                     _settingsFilePath = applicationLocalPath;
                 }

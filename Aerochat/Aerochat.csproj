@@ -1,21 +1,18 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
-	<PropertyGroup Label="Globals">
-		<WebView2LoaderPreference>Static</WebView2LoaderPreference>
-	</PropertyGroup>
-
 	<PropertyGroup>
 		<OutputType>WinExe</OutputType>
-		<TargetFramework>net8.0-windows7.0</TargetFramework>
+		<TargetFramework>net461</TargetFramework>
+		<LangVersion>latest</LangVersion>
 		<Nullable>enable</Nullable>
 		<ImplicitUsings>enable</ImplicitUsings>
 		<UseWPF>true</UseWPF>
 		<DefineConstants>$(DefineConstants);FEATURE_SELECTABLE_MESSAGE_TEXT</DefineConstants>
 		<Platforms>AnyCPU;x64</Platforms>
 		<NuGetAudit>false</NuGetAudit>
+		<SuppressTfmSupportBuildWarnings>true</SuppressTfmSupportBuildWarnings>
 		<ApplicationIcon>Icons\MainWnd.ico</ApplicationIcon>
 		<GenerateAssemblyInfo>false</GenerateAssemblyInfo>
-		<AppHostSourcePath>$(MSBuildProjectDirectory)\AppHostBin\apphost.exe</AppHostSourcePath>
 	</PropertyGroup>
 
 	<PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|AnyCPU'">
@@ -70,7 +67,6 @@
 		<None Remove="Ads\WelcometoBitviewBlaynchannel.gif" />
 		<None Remove="Ads\WWTHD.gif" />
 		<None Remove="Ads\youtube.jpeg" />
-		<None Remove="AppHostBin\apphost.exe" />
 		<None Remove="Controls\pbfillend.png" />
 		<None Remove="Icons\DirectMessage.ico" />
 		<None Remove="Icons\DM.ico" />
@@ -680,7 +676,6 @@
 	</ItemGroup>
 
 	<ItemGroup>
-		<EmbeddedResource Include="AppHostBin\apphost.exe" />
 		<EmbeddedResource Include="Scenes\Scenes.xml" />
 	</ItemGroup>
 
@@ -693,18 +688,16 @@
 
 	<ItemGroup>
 		<PackageReference Include="Google.Protobuf" Version="3.30.2" />
+		<PackageReference Include="System.Text.Json" Version="8.0.5" />
 		<PackageReference Include="Lib.Harmony" Version="2.3.6" />
 		<PackageReference Include="Markdig" Version="0.37.0" />
 		<PackageReference Include="MdXaml" Version="1.27.0" />
-		<PackageReference Include="Microsoft.Web.WebView2" Version="1.0.2739.15" />
 		<PackageReference Include="MimeTypeMapOfficial" Version="1.0.17" />
-		<PackageReference Include="System.Drawing.Common" Version="8.0.8" />
-		<PackageReference Include="System.Speech" Version="9.0.4" />
 		<PackageReference Include="Vanara.PInvoke.DwmApi" Version="4.0.3" />
 		<PackageReference Include="Vanara.PInvoke.Shared" Version="4.0.3" />
 		<PackageReference Include="Vanara.PInvoke.Shell32" Version="4.0.3" />
 		<PackageReference Include="Vanara.PInvoke.User32" Version="4.0.3" />
-		<PackageReference Include="Websocket.Client" Version="5.1.2" />
+		<PackageReference Include="Websocket.Client" Version="4.6.1" />
 		<PackageReference Include="XamlAnimatedGif" Version="2.3.0" />
 	</ItemGroup>
 
@@ -773,6 +766,16 @@
 	</ItemGroup>
 
 	<ItemGroup>
+		<Reference Include="System.Speech" />
+		<Reference Include="System.Security" />
+		<Reference Include="Microsoft.CSharp" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<Using Include="Aerochat.Polyfills" />
+	</ItemGroup>
+
+	<ItemGroup>
 	  <ProjectReference Include="..\Aerobool\Aerobool\Aerobool.csproj" />
 	  <ProjectReference Include="..\Aerovoice\Aerovoice.csproj" />
 	  <ProjectReference Include="..\DSP\DSharpPlus\DSharpPlus.csproj" />
@@ -793,10 +796,6 @@
 		<None Update="Properties\Settings.settings">
 		  <Generator>SettingsSingleFileGenerator</Generator>
 		  <LastGenOutput>Settings.Designer.cs</LastGenOutput>
-		</None>
-		<None Update="WebDir\hCaptcha.html">
-			<Generator>MSBuild:Compile</Generator>
-			<CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
 		</None>
 	</ItemGroup>
 

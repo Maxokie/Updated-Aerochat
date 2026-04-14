@@ -286,7 +286,7 @@ namespace Aerochat.Windows
             SettingsManager.Save();
 
             // Restart the application so every already-open window picks up the new language.
-            System.Diagnostics.Process.Start(Environment.ProcessPath!);
+            System.Diagnostics.Process.Start(System.Diagnostics.Process.GetCurrentProcess().MainModule.FileName!);
             Application.Current.Shutdown();
         }
     }

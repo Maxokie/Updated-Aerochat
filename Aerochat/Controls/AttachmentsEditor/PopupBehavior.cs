@@ -6,7 +6,6 @@
  * getting messed up after maximisation change. Needs to be looked into.
  */
 
-using Microsoft.Web.WebView2.Core;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -495,8 +494,8 @@ namespace Aerochat.Controls.AttachmentsEditor
 
                     case WM_SIZE:
                     {
-                        int width = lParam.ToInt32() & 0xFFFF;
-                        int height = lParam.ToInt32() >> 16 & 0xFFFF;
+                        int width = ((IntPtr)lParam).ToInt32() & 0xFFFF;
+                        int height = ((IntPtr)lParam).ToInt32() >> 16 & 0xFFFF;
 
                         if (_isOptimizingMovement)
                         {
@@ -572,7 +571,7 @@ namespace Aerochat.Controls.AttachmentsEditor
                     }
 
                     User32.GetWindowRect(hWndPopup, out RECT rect);
-                    User32.MapWindowRect(0 /* HWND_DESKTOP */, hWndOwner, ref rect);
+                    User32.MapWindowRect((Vanara.PInvoke.HWND)IntPtr.Zero /* HWND_DESKTOP */, hWndOwner, ref rect);
 
                     // We can't optimise movement if the popup window is larger than the owner,
                     // so we just rely on moving the window directly.

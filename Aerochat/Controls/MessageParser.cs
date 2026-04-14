@@ -137,7 +137,7 @@ namespace Aerochat.Controls
                                 }
                             case ':':
                                 {
-                                    string[] emojiParts = id.Split(":");
+                                    string[] emojiParts = id.Split(':');
 
                                     if (emojiParts.Length != 3)
                                     {

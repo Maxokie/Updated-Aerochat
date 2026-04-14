@@ -118,7 +118,14 @@ namespace DSharpPlus.Net.WebSocket
 
                 this._isClientClose = false;
                 this._isDisposed = false;
-                await this._ws.ConnectAsync(uri, this._socketToken).ConfigureAwait(false);
+
+                // Use a 30-second timeout for the initial connection phase only.
+                // On older Windows (Vista/7) the TLS handshake can stall indefinitely
+                // when the OS doesn't support the required TLS version.
+                using var connectTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+                using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(
+                    this._socketToken, connectTimeout.Token);
+                await this._ws.ConnectAsync(uri, linkedCts.Token).ConfigureAwait(false);
                 this._receiverTask = Task.Run(this.ReceiverLoopAsync, this._receiverToken);
             }
             finally

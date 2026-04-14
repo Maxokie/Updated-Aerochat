@@ -33,10 +33,10 @@ namespace Aerochat.Helpers.AttachmentEditor
                     SHGFI.SHGFI_ICON | SHGFI.SHGFI_USEFILEATTRIBUTES | SHGFI.SHGFI_LARGEICON
                 );
 
-                if (fileInfo.hIcon != 0)
+                if ((IntPtr)fileInfo.hIcon != IntPtr.Zero)
                 {
                     BitmapSource result = Imaging.CreateBitmapSourceFromHIcon(
-                        (nint)fileInfo.hIcon, Int32Rect.Empty, BitmapSizeOptions.FromWidthAndHeight(32, 32)
+                        (IntPtr)fileInfo.hIcon, Int32Rect.Empty, BitmapSizeOptions.FromWidthAndHeight(32, 32)
                     );
                     result.Freeze();
 
@@ -47,7 +47,7 @@ namespace Aerochat.Helpers.AttachmentEditor
             }
             finally
             {
-                if (fileInfo.hIcon != 0)
+                if ((IntPtr)fileInfo.hIcon != IntPtr.Zero)
                 {
                     DestroyIcon(fileInfo.hIcon);
                 }

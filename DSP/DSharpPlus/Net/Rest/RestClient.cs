@@ -80,13 +80,40 @@ namespace DSharpPlus.Net
         {
             this.Logger = logger;
 
-            var httphandler = new HttpClientHandler
+            // On Windows Vista, Schannel does not support TLS 1.2, which Discord requires.
+            // WinHttpHandler bypasses Schannel and uses WinHTTP instead, which CAN support
+            // TLS 1.2 on Vista after installing KB4019276.
+            HttpMessageHandler httphandler;
+            bool isWindowsVista = System.Runtime.InteropServices.RuntimeInformation.IsOSPlatform(
+                System.Runtime.InteropServices.OSPlatform.Windows)
+                && Environment.OSVersion.Version.Major == 6
+                && Environment.OSVersion.Version.Minor == 0;
+
+            if (isWindowsVista)
             {
-                UseCookies = false,
-                AutomaticDecompression = DecompressionMethods.Deflate | DecompressionMethods.GZip,
-                UseProxy = proxy != null,
-                Proxy = proxy
-            };
+                httphandler = new System.Net.Http.WinHttpHandler
+                {
+                    AutomaticDecompression = DecompressionMethods.Deflate | DecompressionMethods.GZip,
+                    Proxy = proxy,
+                    WindowsProxyUsePolicy = proxy != null
+                        ? System.Net.Http.WindowsProxyUsePolicy.UseCustomProxy
+                        : System.Net.Http.WindowsProxyUsePolicy.DoNotUseProxy,
+                    SslProtocols = System.Security.Authentication.SslProtocols.Tls12
+                        | System.Security.Authentication.SslProtocols.Tls11
+                        | System.Security.Authentication.SslProtocols.Tls,
+                    ServerCertificateValidationCallback = (req, cert, chain, errors) => true,
+                };
+            }
+            else
+            {
+                httphandler = new HttpClientHandler
+                {
+                    UseCookies = false,
+                    AutomaticDecompression = DecompressionMethods.Deflate | DecompressionMethods.GZip,
+                    UseProxy = proxy != null,
+                    Proxy = proxy
+                };
+            }
 
             this.HttpClient = new HttpClient(httphandler)
             {

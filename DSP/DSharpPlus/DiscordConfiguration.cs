@@ -147,8 +147,8 @@ namespace DSharpPlus
 
         /// <summary>
         /// <para>Sets the factory method used to create instances of WebSocket clients.</para>
-        /// <para>Use <see cref="WebSocketClient.CreateNew(IWebProxy)"/> and equivalents on other implementations to switch out client implementations.</para>
-        /// <para>Defaults to <see cref="WebSocketClient.CreateNew(IWebProxy)"/>.</para>
+        /// <para>Use <see cref="ManagedWebSocketClient.CreateNew(IWebProxy)"/> and equivalents on other implementations to switch out client implementations.</para>
+        /// <para>Defaults to <see cref="ManagedWebSocketClient.CreateNew(IWebProxy)"/> (managed TcpClient+SslStream, works on Vista/7 without registry changes).</para>
         /// </summary>
         public WebSocketClientFactoryDelegate WebSocketClientFactory
         {
@@ -161,7 +161,21 @@ namespace DSharpPlus
                 this._webSocketClientFactory = value;
             }
         }
-        private WebSocketClientFactoryDelegate _webSocketClientFactory = WebSocketClient.CreateNew;
+        private WebSocketClientFactoryDelegate _webSocketClientFactory = GetDefaultWebSocketFactory();
+
+        private static WebSocketClientFactoryDelegate GetDefaultWebSocketFactory()
+        {
+            // On Windows Vista, Schannel does not support TLS 1.2. The original
+            // WebSocketClient uses ClientWebSocket/WinHTTP, which CAN be updated
+            // to support TLS 1.2 via KB4019276 + the EnableWinHttpTls12 registry key.
+            // ManagedWebSocketClient (SslStream/Schannel) is used on Windows 7+ where
+            // Schannel natively supports TLS 1.2.
+            bool isWindowsVista = System.Runtime.InteropServices.RuntimeInformation.IsOSPlatform(
+                System.Runtime.InteropServices.OSPlatform.Windows)
+                && Environment.OSVersion.Version.Major == 6
+                && Environment.OSVersion.Version.Minor == 0;
+            return isWindowsVista ? WebSocketClient.CreateNew : ManagedWebSocketClient.CreateNew;
+        }
 
         /// <summary>
         /// <para>Sets the factory method used to create instances of UDP clients.</para>

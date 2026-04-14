@@ -82,7 +82,7 @@ namespace Aerochat.ViewModels
                 return;
             }
 
-            var searchTerms = SearchText.ToLower().Split(' ', StringSplitOptions.RemoveEmptyEntries);
+            var searchTerms = SearchText.ToLower().Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
             if (searchTerms.Length == 0)
             {
                 return;

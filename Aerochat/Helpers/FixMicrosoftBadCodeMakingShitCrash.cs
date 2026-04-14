@@ -19,7 +19,26 @@ namespace Aerochat.Helpers
         public static void InstallHooks()
         {
             Harmony harmony = new("live.aerochat.fixmicrosoftbadcodemakingshitcrash");
-            harmony.PatchAll();
+
+            // Patch each class individually so that a failure on one (e.g. because
+            // PresentationCore.dll is NGEN-compiled and its code pages are read-only
+            // on Vista/7) does not prevent the other patches from being applied.
+            TryPatch(harmony, typeof(BitmapSource_FinalizeCreation_HookClass));
+            TryPatch(harmony, typeof(Clipboard_Flush_HookClass));
+        }
+
+        private static void TryPatch(Harmony harmony, Type patchClass)
+        {
+            try
+            {
+                harmony.CreateClassProcessor(patchClass).Patch();
+            }
+            catch (Exception)
+            {
+                // Silently ignore: the target method is likely NGEN-compiled on this
+                // OS and its memory pages cannot be patched by Harmony. The app
+                // continues without this particular fix.
+            }
         }
     }
 

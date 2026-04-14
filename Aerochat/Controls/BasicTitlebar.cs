@@ -225,8 +225,10 @@ namespace Aerochat.Controls
                 Window.SourceInitialized += Window_SourceInitialized;
                 Window.StateChanged += Window_StateChanged;
 
-                DpiScale dpiScale = VisualTreeHelper.GetDpi(Window);
-                double fDpiScale = (dpiScale.DpiScaleX + dpiScale.DpiScaleY) / 2;
+                var dpiSource = System.Windows.PresentationSource.FromVisual(Window);
+                double dpiX = dpiSource?.CompositionTarget?.TransformToDevice.M11 ?? 1.0;
+                double dpiY = dpiSource?.CompositionTarget?.TransformToDevice.M22 ?? 1.0;
+                double fDpiScale = (dpiX + dpiY) / 2;
 
                 // To avoid white pixels along the corners at higher DPIs, we settle for a slightly higher
                 // border radius.
@@ -460,7 +462,7 @@ namespace Aerochat.Controls
                 return lRes;
             }
 
-            return nint.Zero;
+            return IntPtr.Zero;
         }
 
         #region DLL imports
@@ -614,7 +616,7 @@ namespace Aerochat.Controls
                     if (_titlebarStyle == TitlebarStyle.Custom)
                     {
                         handled = true;
-                        return 0;
+                        return IntPtr.Zero;
                     }
                     break;
                 }

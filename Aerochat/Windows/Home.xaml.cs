@@ -1424,15 +1424,14 @@ namespace Aerochat.Windows
 
         private void PreviousNewsItem_Click(object sender, RoutedEventArgs e)
         {
-            // get the current index
-            if (ViewModel.CurrentNews is null) return;
+            if (ViewModel.CurrentNews is null || ViewModel.News.Count == 0) return;
             var index = ViewModel.News.IndexOf(ViewModel.CurrentNews);
             SetNews(ViewModel.News[(index - 1 + ViewModel.News.Count) % ViewModel.News.Count]);
         }
 
         private void NextNewsItem_Click(object sender, RoutedEventArgs e)
         {
-            if (ViewModel.CurrentNews is null) return;
+            if (ViewModel.CurrentNews is null || ViewModel.News.Count == 0) return;
             var index = ViewModel.News.IndexOf(ViewModel.CurrentNews);
             SetNews(ViewModel.News[(index + 1) % ViewModel.News.Count]);
         }

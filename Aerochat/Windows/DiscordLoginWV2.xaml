@@ -4,14 +4,14 @@
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         xmlns:local="clr-namespace:Aerochat.Windows"
-        xmlns:wv2="clr-namespace:Microsoft.Web.WebView2.Wpf;assembly=Microsoft.Web.WebView2.Wpf"
         mc:Ignorable="d"
-        Title=".NET Passport Log-on" Height="500" Width="850">
-    <Grid>
-        <Grid.ColumnDefinitions>
-            <ColumnDefinition Width="139*"/>
-            <ColumnDefinition Width="286*"/>
-        </Grid.ColumnDefinitions>
-        <wv2:WebView2 x:Name="LoginWebView" Grid.ColumnSpan="2" />
+        Title=".NET Passport Log-on" Height="200" Width="420"
+        WindowStartupLocation="CenterOwner" ResizeMode="NoResize">
+    <Grid Margin="16">
+        <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center">
+            <TextBlock TextWrapping="Wrap" TextAlignment="Center" FontSize="13"
+                       Text="Browser-based login is not supported on this version of Aerochat.&#x0a;&#x0a;Please use token login instead." />
+            <Button Content="Close" Margin="0,16,0,0" Width="80" Click="OnClose" HorizontalAlignment="Center" />
+        </StackPanel>
     </Grid>
 </Window>

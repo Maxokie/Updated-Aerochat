@@ -1,4 +1,4 @@
-﻿using Aerochat.Theme;
+using Aerochat.Theme;
 using Aerochat.ViewModels;
 using System;
 using System.Collections.Generic;
@@ -44,7 +44,7 @@ namespace Aerochat.Windows
 
         private void OnClickRestartAerochatButton(object sender, RoutedEventArgs e)
         {
-            Shell32.ShellExecute(HWND.NULL, "open", System.Environment.ProcessPath, null, null, ShowWindowCommand.SW_SHOWNORMAL);
+            Shell32.ShellExecute(HWND.NULL, "open", System.Diagnostics.Process.GetCurrentProcess().MainModule.FileName, null, null, ShowWindowCommand.SW_SHOWNORMAL);
             Close();
         }
     }

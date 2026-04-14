@@ -4,10 +4,14 @@
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         xmlns:local="clr-namespace:Aerochat.Windows"
-        xmlns:wv2="clr-namespace:Microsoft.Web.WebView2.Wpf;assembly=Microsoft.Web.WebView2.Wpf"
         mc:Ignorable="d"
-        Title="WebView2Frame" Height="450" Width="800">
-    <Grid>
-        <wv2:WebView2 x:Name="CaptchaWebView" />
+        Title="Captcha Required" Height="200" Width="420"
+        WindowStartupLocation="CenterOwner" ResizeMode="NoResize">
+    <Grid Margin="16">
+        <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center">
+            <TextBlock TextWrapping="Wrap" TextAlignment="Center" FontSize="13"
+                       Text="Captcha verification is not supported on this version of Aerochat.&#x0a;&#x0a;Please try again or use token login instead." />
+            <Button Content="Close" Margin="0,16,0,0" Width="80" Click="OnClose" HorizontalAlignment="Center" />
+        </StackPanel>
     </Grid>
 </Window>

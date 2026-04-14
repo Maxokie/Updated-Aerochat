@@ -10,9 +10,9 @@ Unicode true
 Name "Aerochat"
 Outfile "../Output/aerochat-setup.exe"
 RequestExecutionLevel user
-ManifestSupportedOS Win7
+ManifestSupportedOS WinVista
 
-!define AEROCHAT_BIN_FOLDER "bin\x64\Release\net8.0-windows7.0"
+!define AEROCHAT_BIN_FOLDER "bin\x64\Release\net461"
 !define AEROCHAT_VERSION "0.2.4"
 !define AEROCHAT_RC # Comment this line out if you aren't building RC
 !define AEROCHAT_RC_VERSION "Stability Test Release"
@@ -229,9 +229,9 @@ Function .onInit
         Quit
     ${EndIf}
     
-    # Need at least Windows 7.
-    ${IfNot} ${AtLeastWin7}
-        MessageBox MB_OK|MB_ICONSTOP "$(STRING_NOT_WIN7)"
+    # Need at least Windows Vista.
+    ${IfNot} ${AtLeastWinVista}
+        MessageBox MB_OK|MB_ICONSTOP "$(STRING_NOT_WIN_VISTA)"
         Quit
     ${EndIf}
     
@@ -641,10 +641,10 @@ _VcrtAlreadyInstalled:
     # Aerochat requires the .NET runtime, of course.
     DetailPrint "$(STRING_STATUS_DOTNET_ENSURING)"
     SetDetailsPrint listonly # Prefer displaying the user-friendly message since this is a long action.
-    ${PLACE_FILE} ".\windowsdesktop-runtime-8.0.19-win-x64.exe"
-    ExecWait '"$INSTDIR\windowsdesktop-runtime-8.0.19-win-x64.exe" /quiet /norestart'
+    ${PLACE_FILE} ".\NDP461-KB3102436-x86-x64-AllOS-ENU.exe"
+    ExecWait '"$INSTDIR\NDP461-KB3102436-x86-x64-AllOS-ENU.exe" /quiet /norestart'
     SetDetailsPrint both
-    Delete "$INSTDIR\windowsdesktop-runtime-8.0.19-win-x64.exe"
+    Delete "$INSTDIR\NDP461-KB3102436-x86-x64-AllOS-ENU.exe"
     DetailPrint "$(STRING_STATUS_DOTNET_ENSURED)"
 
     # Create shortcut

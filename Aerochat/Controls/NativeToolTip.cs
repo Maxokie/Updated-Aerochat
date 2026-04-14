@@ -267,7 +267,7 @@ namespace Aerochat.Controls
             SetWindowPos(_tooltipWindow, HWND_TOPMOST, 0, 0, 0, 0, SetWindowPosFlags.SWP_NOMOVE | SetWindowPosFlags.SWP_NOSIZE | SetWindowPosFlags.SWP_NOACTIVATE);
 
             var cs = GetClassLong(_tooltipWindow, GCL_STYLE);
-            cs |= CS_DROPSHADOW;
+            cs = new IntPtr(cs.ToInt32() | CS_DROPSHADOW);
             SetClassLong(_tooltipWindow, GCL_STYLE, cs);
 
             _ti = new TOOLINFO();
@@ -287,7 +287,7 @@ namespace Aerochat.Controls
             // effectively disable the maximum width bound - line breaking can behave oddly otherwise
             SendToolTipMessage(ToolTipMessages.TTM_SETMAXTIPWIDTH, IntPtr.Zero, new IntPtr(short.MaxValue));
 
-            SendToolTipMessage(ToolTipMessages.TTM_SETDELAYTIME, new nint(3), IntPtr.Zero);
+            SendToolTipMessage(ToolTipMessages.TTM_SETDELAYTIME, new IntPtr(3), IntPtr.Zero);
 
             added = true;
         }

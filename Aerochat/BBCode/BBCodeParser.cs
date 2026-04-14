@@ -32,7 +32,7 @@ namespace Aerochat.BBCode
                             index++;
                         }
                         index++;
-                        var tagParts = tag.Split(" ");
+                        var tagParts = tag.Split(' ');
                         if (tagParts[0] == current.Content)
                         {
                             current = current.Parent;
@@ -59,11 +59,11 @@ namespace Aerochat.BBCode
                             throw new Exception("Unclosed tag");
                         }
                         index++;
-                        var tagParts = tag.Split(" ");
+                        var tagParts = tag.Split(' ');
                         BBCodeToken token = new(BBCodeTokenType.Tag, tagParts[0]);
                         foreach (var paramDef in tagParts.Skip(1))
                         {
-                            var equalsIndex = paramDef.IndexOf("=");
+                            var equalsIndex = paramDef.IndexOf('=');
                             if (equalsIndex == -1) throw new InvalidDataException("Missing equals in dictionary");
                             var key = new string(paramDef.Take(equalsIndex).ToArray());
                             var value = new string(paramDef.Skip(equalsIndex + 1).ToArray());

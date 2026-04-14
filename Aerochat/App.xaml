@@ -7,7 +7,7 @@
         <ResourceDictionary>
             <ResourceDictionary.MergedDictionaries>
                 <ResourceDictionary
-                Source="/PresentationFramework.Aero;component/themes/Aero.NormalColor.xaml" />
+                Source="/PresentationFramework.Aero;v4.0.0.0;31bf3856ad364e35;component/themes/Aero.NormalColor.xaml" />
                 <ResourceDictionary Source="Controls/ButtonTheme/ButtonTheme.xaml" />
                 <ResourceDictionary Source="Controls/ScrollBar/ScrollBarTheme.xaml" />
             </ResourceDictionary.MergedDictionaries>

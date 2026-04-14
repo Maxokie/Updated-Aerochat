@@ -38,6 +38,7 @@ using System.IO.Pipes;
 using System.Windows.Media.Animation;
 using Aerochat.Enums;
 using DSharpPlus.Exceptions;
+using System.Security.Authentication;
 
 namespace Aerochat
 {
@@ -214,10 +215,43 @@ namespace Aerochat
 
         public App()
         {
-            FixMicrosoftBadCodeMakingShitCrash.InstallHooks();
-            InitializeComponent();
+            // Discord requires TLS 1.2+. On .NET Framework, TLS 1.2 is not
+            // enabled by default on older Windows versions (Vista, 7).
+            System.Net.ServicePointManager.SecurityProtocol =
+                System.Net.SecurityProtocolType.Tls12 |
+                System.Net.SecurityProtocolType.Tls11 |
+                System.Net.SecurityProtocolType.Tls;
 
+            // ClientWebSocket on .NET Framework uses WinHTTP, which has its own
+            // TLS settings separate from ServicePointManager. Try to enable TLS 1.2
+            // for WinHTTP via the registry. Silently ignores failure (no admin rights).
+            EnableWinHttpTls12();
+
+            InitializeComponent();
+            FixMicrosoftBadCodeMakingShitCrash.InstallHooks();
             ArgumentsMessageReceived += OnReceiveArgumentsMessage;
+        }
+
+        private static void EnableWinHttpTls12()
+        {
+            try
+            {
+                const int Tls12Flag = 0x0800;
+                const int Tls11Flag = 0x0200;
+                const string keyPath = @"SOFTWARE\Microsoft\Windows\CurrentVersion\Internet Settings\WinHttp";
+                using var key = Microsoft.Win32.Registry.LocalMachine.OpenSubKey(keyPath, writable: true)
+                             ?? Microsoft.Win32.Registry.LocalMachine.CreateSubKey(keyPath);
+                if (key != null)
+                {
+                    int current = key.GetValue("DefaultSecureProtocols") is int v ? v : 0;
+                    key.SetValue("DefaultSecureProtocols", current | Tls12Flag | Tls11Flag,
+                        Microsoft.Win32.RegistryValueKind.DWord);
+                }
+            }
+            catch
+            {
+                // No admin rights or unsupported registry path — continue without this fix.
+            }
         }
 
         private void StartAerochatMain()
@@ -400,6 +434,36 @@ namespace Aerochat
             });
         }
 
+        /// <summary>
+        /// True when the exception chain indicates TLS/SSL/Schannel negotiation failed.
+        /// Used so we do not blame "missing TLS updates" on Vista for timeouts or plain network errors.
+        /// </summary>
+        private static bool ExceptionIndicatesTlsHandshakeProblem(Exception ex)
+        {
+            for (Exception? e = ex; e != null; e = e.InnerException)
+            {
+                if (e is AuthenticationException)
+                    return true;
+
+                string? msg = e.Message;
+                if (string.IsNullOrEmpty(msg))
+                    continue;
+
+                if (msg.Contains("SSL", StringComparison.OrdinalIgnoreCase))
+                    return true;
+                if (msg.Contains("TLS", StringComparison.OrdinalIgnoreCase))
+                    return true;
+                if (msg.Contains("certificate", StringComparison.OrdinalIgnoreCase))
+                    return true;
+                if (msg.Contains("secure channel", StringComparison.OrdinalIgnoreCase))
+                    return true;
+                if (msg.Contains("Schannel", StringComparison.OrdinalIgnoreCase))
+                    return true;
+            }
+
+            return false;
+        }
+
         public async Task<AerochatLoginStatus> BeginLogin(string givenToken, bool save = false, UserStatus? status = null)
         {
             Discord.Client = new(new()
@@ -414,7 +478,15 @@ namespace Aerochat
 
             try
             {
-                await Discord.Client.ConnectAsync(status: status ?? UserStatus.Online);
+                // Bounded wait so the sign-in button never hangs forever on network/TLS failures.
+                // Vista/7 often exceed a short deadline even on a healthy path (see LoginConnectTimeout).
+                int connectTimeoutSec = LoginConnectTimeout.Seconds;
+                var connectTask = Discord.Client.ConnectAsync(status: status ?? UserStatus.Online);
+                var timeoutTask = Task.Delay(TimeSpan.FromSeconds(connectTimeoutSec));
+                var completed = await Task.WhenAny(connectTask, timeoutTask);
+                if (completed == timeoutTask)
+                    return AerochatLoginStatus.ConnectionTimeout;
+                await connectTask; // re-await to propagate any exception
             }
             catch (UnauthorizedException)
             {
@@ -426,6 +498,13 @@ namespace Aerochat
             }
             catch (ServerErrorException)
             {
+                return AerochatLoginStatus.ServerError;
+            }
+            catch (Exception ex)
+            {
+                // TLS/SSL errors vs other network failures (socket, DNS, Discord gateway, etc.)
+                if (ExceptionIndicatesTlsHandshakeProblem(ex))
+                    return AerochatLoginStatus.TlsHandshakeFailure;
                 return AerochatLoginStatus.ServerError;
             }
 
@@ -693,7 +772,7 @@ namespace Aerochat
                 {
                     if (item is JumpTask task)
                     {
-                        string[] tokens = task.Arguments.Split(" ");
+                        string[] tokens = task.Arguments.Split(' ');
 
                         if (tokens.Length < 2)
                             continue;
@@ -758,11 +837,11 @@ namespace Aerochat
 
                 JumpTask item = new()
                 {
-                    ApplicationPath = System.Environment.ProcessPath,
+                    ApplicationPath = System.Diagnostics.Process.GetCurrentProcess().MainModule.FileName,
                     Arguments = $"/opendm {channelId}",
                     Title = recipientName,
                     Description = string.Format(LocalizationManager.Instance["AppJumpListOpenChatWith"], recipientName),
-                    IconResourcePath = System.Environment.ProcessPath,
+                    IconResourcePath = System.Diagnostics.Process.GetCurrentProcess().MainModule.FileName,
                     IconResourceIndex = 0,
                     CustomCategory = LocalizationManager.Instance["AppJumpListRecentChats"],
                 };
@@ -787,11 +866,11 @@ namespace Aerochat
 
                 JumpTask item = new()
                 {
-                    ApplicationPath = System.Environment.ProcessPath,
+                    ApplicationPath = System.Diagnostics.Process.GetCurrentProcess().MainModule.FileName,
                     Arguments = $"/openguild {guildId}",
                     Title = guild.Name,
                     Description = string.Format(LocalizationManager.Instance["AppJumpListOpenChatIn"], guild.Name),
-                    IconResourcePath = System.Environment.ProcessPath,
+                    IconResourcePath = System.Diagnostics.Process.GetCurrentProcess().MainModule.FileName,
                     IconResourceIndex = 0,
                     CustomCategory = LocalizationManager.Instance["AppJumpListRecentServers"],
                 };
@@ -896,7 +975,7 @@ namespace Aerochat
 
             Shell32.ShellExecute(HWND.NULL,
                 "open",
-                System.Environment.ProcessPath,
+                System.Diagnostics.Process.GetCurrentProcess().MainModule.FileName,
                 $"/OpenCrashLog {exceptionBase64}",
                 null,
                 ShowWindowCommand.SW_SHOWNORMAL

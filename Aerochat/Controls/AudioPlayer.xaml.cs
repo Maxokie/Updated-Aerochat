@@ -251,7 +251,7 @@ namespace Aerochat.Controls
             {
                 HttpClient client = new HttpClient();
                 byte[] bytes = await client.GetByteArrayAsync(Url);
-                await File.WriteAllBytesAsync(saveFile.FileName, bytes);
+                await System.Threading.Tasks.Task.Run(() => File.WriteAllBytes(saveFile.FileName, bytes));
             }
 
 

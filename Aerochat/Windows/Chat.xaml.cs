@@ -253,7 +253,7 @@ namespace Aerochat.Windows
 
             var newChannel = await _chatService.GetChannelAsync(ChannelId);
 
-            await Dispatcher.BeginInvoke(delegate
+            await Dispatcher.BeginInvoke((Action)delegate
             {
                 if (ViewModel is null || ViewModel?.Messages is null) return;
                 Channel = newChannel;
@@ -347,7 +347,7 @@ namespace Aerochat.Windows
             });
 
 
-            await Dispatcher.BeginInvoke(delegate
+            await Dispatcher.BeginInvoke((Action)delegate
             {
                 if (ViewModel is null || ViewModel?.Messages is null) return;
                 if (initial)
@@ -1711,7 +1711,7 @@ namespace Aerochat.Windows
                 }
 
                 int max = 200;
-                ViewModel.BottomHeight = Math.Clamp(ViewModel.BottomHeight, min, max);
+                ViewModel.BottomHeight = ViewModel.BottomHeight < min ? min : (ViewModel.BottomHeight > max ? max : ViewModel.BottomHeight);
                 if (ViewModel.BottomHeight != min && ViewModel.BottomHeight != max) initialPos = pos;
                 sizeTainted = true;
             }
@@ -1812,7 +1812,7 @@ namespace Aerochat.Windows
                                     if (channel == null) return;
                                     ulong userID = 0;
                                     VoiceManager.Instance.VoiceSocket?.UserSSRCMap.TryGetValue(e.SSRC, out userID);
-                                    var user = castedItem.ConnectedUsers.FirstOrDefault(u => u.Id == userID, null!);
+                                    var user = castedItem.ConnectedUsers.FirstOrDefault(u => u.Id == userID);
                                     if (user == null) return;
                                     var index = castedItem.ConnectedUsers.IndexOf(user);
                                     if (index == -1) return;

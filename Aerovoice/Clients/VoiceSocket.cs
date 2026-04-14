@@ -23,7 +23,6 @@ using Aerovoice.Logging;
 using Aerovoice.Recorders;
 using Aerovoice.Encoders;
 using Aerovoice.Timestamp;
-using static System.Runtime.InteropServices.JavaScript.JSType;
 using System.Runtime.InteropServices;
 using static Vanara.PInvoke.Kernel32;
 
@@ -50,7 +49,7 @@ namespace Aerovoice.Clients
     [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
     public delegate void VoiceUserCallback(uint ssrc, bool speaking);
 
-    partial class VoiceSession : IDisposable
+    class VoiceSession : IDisposable
     {
         unsafe struct RawIPInfo
         {
@@ -58,25 +57,45 @@ namespace Aerovoice.Clients
             public ushort Port;
         }
 
-        [LibraryImport("AerovoiceNative.dll")]
-        [UnmanagedCallConv(CallConvs = new Type[] { typeof(System.Runtime.CompilerServices.CallConvCdecl) })]
-        private static partial IntPtr voice_session_new(uint ssrc, ulong channelId, [MarshalAs(UnmanagedType.LPUTF8Str)] string ip, ushort port, VoiceUserCallback onSpeaking);
-        [LibraryImport("AerovoiceNative.dll")]
-        [UnmanagedCallConv(CallConvs = new Type[] { typeof(System.Runtime.CompilerServices.CallConvCdecl) })]
-        private static partial void voice_session_free(IntPtr sessionHandle);
-        [LibraryImport("AerovoiceNative.dll")]
-        [UnmanagedCallConv(CallConvs = new Type[] { typeof(System.Runtime.CompilerServices.CallConvCdecl) })]
-        private static partial void voice_session_init_poll_thread(IntPtr sessionHandle);
-        [LibraryImport("AerovoiceNative.dll")]
-        [UnmanagedCallConv(CallConvs = new Type[] { typeof(System.Runtime.CompilerServices.CallConvCdecl) })]
-        private static partial IntPtr voice_session_discover_ip(IntPtr sessionHandle);
-        [LibraryImport("AerovoiceNative.dll")]
-        [UnmanagedCallConv(CallConvs = new Type[] { typeof(System.Runtime.CompilerServices.CallConvCdecl) })]
-        private unsafe static partial IntPtr voice_session_set_secret(IntPtr sessionHandle, byte* secret, uint secretLen);
-        [LibraryImport("AerovoiceNative.dll")]
-        [UnmanagedCallConv(CallConvs = new Type[] { typeof(System.Runtime.CompilerServices.CallConvCdecl) })]
-        [return: MarshalAs(UnmanagedType.LPUTF8Str)]
-        private unsafe static partial string voice_session_select_cryptor(IntPtr sessionHandle, [MarshalAs(UnmanagedType.LPArray, ArraySubType = UnmanagedType.LPUTF8Str, SizeParamIndex = 2)] string[] availableMethods, uint availableMethodsLen);
+        [DllImport("AerovoiceNative.dll", CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Ansi)]
+        private static extern IntPtr voice_session_new(uint ssrc, ulong channelId, string ip, ushort port, VoiceUserCallback onSpeaking);
+
+        [DllImport("AerovoiceNative.dll", CallingConvention = CallingConvention.Cdecl)]
+        private static extern void voice_session_free(IntPtr sessionHandle);
+
+        [DllImport("AerovoiceNative.dll", CallingConvention = CallingConvention.Cdecl)]
+        private static extern void voice_session_init_poll_thread(IntPtr sessionHandle);
+
+        [DllImport("AerovoiceNative.dll", CallingConvention = CallingConvention.Cdecl)]
+        private static extern IntPtr voice_session_discover_ip(IntPtr sessionHandle);
+
+        [DllImport("AerovoiceNative.dll", CallingConvention = CallingConvention.Cdecl)]
+        private static unsafe extern IntPtr voice_session_set_secret(IntPtr sessionHandle, byte* secret, uint secretLen);
+
+        [DllImport("AerovoiceNative.dll", CallingConvention = CallingConvention.Cdecl, CharSet = CharSet.Ansi)]
+        private static extern IntPtr voice_session_select_cryptor_raw(IntPtr sessionHandle, IntPtr[] availableMethods, uint availableMethodsLen);
+
+        private static string voice_session_select_cryptor(IntPtr sessionHandle, string[] availableMethods, uint availableMethodsLen)
+        {
+            var ptrs = new IntPtr[availableMethods.Length];
+            var handles = new System.Runtime.InteropServices.GCHandle[availableMethods.Length];
+            try
+            {
+                for (int i = 0; i < availableMethods.Length; i++)
+                {
+                    byte[] utf8 = System.Text.Encoding.UTF8.GetBytes(availableMethods[i] + "\0");
+                    handles[i] = System.Runtime.InteropServices.GCHandle.Alloc(utf8, System.Runtime.InteropServices.GCHandleType.Pinned);
+                    ptrs[i] = handles[i].AddrOfPinnedObject();
+                }
+                IntPtr resultPtr = voice_session_select_cryptor_raw(sessionHandle, ptrs, availableMethodsLen);
+                return resultPtr == IntPtr.Zero ? string.Empty : Marshal.PtrToStringAnsi(resultPtr) ?? string.Empty;
+            }
+            finally
+            {
+                foreach (var h in handles)
+                    if (h.IsAllocated) h.Free();
+            }
+        }
 
         private IntPtr _sessionHandle;
 
@@ -567,7 +586,8 @@ namespace Aerovoice.Clients
             {
                 short sample = (short)((pcm[i + 1] << 8) | pcm[i]);
                 int scaled = (int)(sample * volume);
-                scaled = Math.Clamp(scaled, short.MinValue, short.MaxValue);
+                if (scaled < short.MinValue) scaled = short.MinValue;
+                else if (scaled > short.MaxValue) scaled = short.MaxValue;
                 result[i] = (byte)(scaled & 0xFF);
                 result[i + 1] = (byte)((scaled >> 8) & 0xFF);
             }

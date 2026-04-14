@@ -1,11 +1,11 @@
 ﻿using Aerochat.Enums;
+using Aerochat.Helpers;
 using Aerochat.Hoarder;
 using Aerochat.Settings;
 using Aerochat.Theme;
 using Aerochat.ViewModels;
 using DSharpPlus.Entities;
 using DSharpPlus.Exceptions;
-using Microsoft.Web.WebView2.Core;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -76,8 +76,31 @@ namespace Aerochat.Windows
                     new Run("There was an error connecting to the server. Please check your internet connection and firewall " +
                             "settings to ensure that Aerochat has access to the internet.") },
 
+                AerochatLoginStatus.ConnectionTimeout => new() {
+                    new Run($"Aerochat did not get a complete response from Discord within {LoginConnectTimeout.Seconds} seconds. This is often a slow " +
+                            "or blocked network path, a firewall, or a VPN. It is not necessarily a TLS or Windows Update issue.") },
+
+                AerochatLoginStatus.TlsHandshakeFailure => new() {
+                    new Run("A secure connection to Discord could not be completed (TLS/SSL). Check that your system date " +
+                            "and time are correct, then try again.") },
+
                 _ => new() { new Run("An unknown error occurred. Please try again later.") }
             };
+
+            // Only suggest Vista TLS documentation when the failure actually looks like TLS negotiation,
+            // so users with working TLS 1.2 are not told to install the wrong Windows update.
+            var osVer = Environment.OSVersion.Version;
+            bool isVista = osVer.Major == 6 && osVer.Minor == 0;
+            if (loginStatus == AerochatLoginStatus.TlsHandshakeFailure && isVista)
+            {
+                message.Add(new Run("\n\nTLS prerequisites differ between Windows Vista and Windows 7; see "));
+                var tlsHelp = new Hyperlink(new Run("Get help logging in"))
+                {
+                    NavigateUri = new Uri(HELP_LOGON_URI),
+                };
+                message.Add(tlsHelp);
+                message.Add(new Run(" for Vista-specific steps."));
+            }
 
             var dialog = new Dialog("We can't sign you in to Discord", message, SystemIcons.Information);
             dialog.Owner = this;
@@ -175,64 +198,18 @@ namespace Aerochat.Windows
         /// </remarks>
         private string TransformTokenForConsumption(string originalToken)
         {
-            string processedToken = originalToken.Replace("Authorization:", "", true, null)
+            string processedToken = System.Text.RegularExpressions.Regex.Replace(originalToken, "Authorization:", "", System.Text.RegularExpressions.RegexOptions.IgnoreCase)
                 .Replace("\n", "")
                 .Replace("\r", "")
                 .Trim();
             return processedToken;
         }
 
-        private async void OnClickLoginWithPassword(object sender, RoutedEventArgs e)
+        private void OnClickLoginWithPassword(object sender, System.Windows.RoutedEventArgs e)
         {
-            string ver = "";
-            try
-            {
-                ver = CoreWebView2Environment.GetAvailableBrowserVersionString();
-            }
-            catch (Exception) { }
-            if (string.IsNullOrEmpty(ver))
-            {
-                var dialog = new Dialog("Unsupported configuration", "This feature requires the WebView2 runtime to be installed on your computer.", SystemIcons.Information);
-                dialog.Owner = this;
-                dialog.ShowDialog();
-                return;
-            }
-            DiscordLoginWV2 login = new DiscordLoginWV2();
-            login.Owner = this;
-            login.ShowDialog();
-            var app = (App)Application.Current;
-            // login using login.Token
-            if (string.IsNullOrEmpty(login.Token)) return;
-            ViewModel.NotLoggingIn = false;
-            bool rememberMe = RememberMe.IsChecked == true;
-            UserStatus status = ViewModel.LoginStatus switch
-            {
-                "Available" => UserStatus.Online,
-                "Busy" => UserStatus.DoNotDisturb,
-                "Away" => UserStatus.Idle,
-                "Appear offline" => UserStatus.Invisible,
-                _ => UserStatus.Online
-            };
-
-            AerochatLoginStatus loginStatus = login.Succeeded
-                ? await app.BeginLogin(login.Token, rememberMe, status)
-                : AerochatLoginStatus.UnknownFailure;
-
-            if (loginStatus != AerochatLoginStatus.Success)
-            {
-                ViewModel.NotLoggingIn = true;
-
-                var dialog = new Dialog("We can't sign you in to Discord", new List<Inline>() {
-                    new Run("An error occurred attempting to use Discord password login. "),
-                    new Hyperlink(new Run("For help retrieving your Discord token, click here."))
-                    {
-                        NavigateUri = new Uri(HELP_GET_TOKEN_URI)
-                    },
-                }, SystemIcons.Information);
-
-                dialog.Owner = this;
-                dialog.ShowDialog();
-            }
+            var unsupportedDialog = new Dialog("Unsupported", "Browser-based login is not supported in this build. Please use token login instead.", SystemIcons.Information);
+            unsupportedDialog.Owner = this;
+            unsupportedDialog.ShowDialog();
         }
 
         private void PART_GetHelpLoggingInHyperlink_Click(object sender, RoutedEventArgs e)

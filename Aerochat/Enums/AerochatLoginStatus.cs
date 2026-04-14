@@ -12,6 +12,10 @@ namespace Aerochat.Enums
         UnknownFailure,
         Unauthorized,
         ServerError,
+        /// <summary>Connect did not complete within the client timeout.</summary>
+        ConnectionTimeout,
+        /// <summary>Failure while negotiating TLS / a secure channel (not generic network errors).</summary>
+        TlsHandshakeFailure,
         BadRequest,
     }
 }

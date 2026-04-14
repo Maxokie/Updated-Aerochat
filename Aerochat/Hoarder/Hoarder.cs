@@ -1,7 +1,6 @@
 ﻿using Aerochat.ViewModels;
 using DSharpPlus;
 using DSharpPlus.Entities;
-using Microsoft.Web.WebView2.Core;
 using System;
 using System.Collections.Generic;
 using System.Linq;
