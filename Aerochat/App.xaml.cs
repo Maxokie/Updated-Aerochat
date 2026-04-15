@@ -46,6 +46,7 @@ namespace Aerochat
         public static Guid _appGuid;
         private static Mutex? _appInstanceMutex = null;
         private MessageWindow _messageWindow;
+        private SplashScreen? _splashScreen;
 
         private Timer fullscreenInterval = new(500);
         private MediaPlayer mediaPlayer = new();
@@ -254,8 +255,32 @@ namespace Aerochat
             }
         }
 
+        private void CloseSplashIfVisible()
+        {
+            try
+            {
+                _splashScreen?.Close(TimeSpan.Zero);
+            }
+            catch
+            {
+                // Ignore failures when closing the splash (e.g. already dismissed).
+            }
+
+            _splashScreen = null;
+        }
+
         private void StartAerochatMain()
         {
+            try
+            {
+                _splashScreen = new SplashScreen("/Resources/splashscreen.png");
+                _splashScreen.Show(false);
+            }
+            catch
+            {
+                _splashScreen = null;
+            }
+
             SettingsManager.Load();
 
             // Apply the saved locale as early as possible so every window opened
@@ -397,6 +422,7 @@ namespace Aerochat
                         {
                             await Dispatcher.InvokeAsync(() =>
                             {
+                                CloseSplashIfVisible();
                                 LoginWindow = new(true, success);
                                 LoginWindow.Show();
                             });
@@ -407,6 +433,7 @@ namespace Aerochat
                         DiagnosticsLog.Swallowed("App.StartAerochatMain: BeginLogin (saved token)", ex);
                         await Dispatcher.InvokeAsync(() =>
                         {
+                            CloseSplashIfVisible();
                             LoginWindow = new(true, AerochatLoginStatus.UnknownFailure);
                             LoginWindow.Show();
                         });
@@ -416,6 +443,7 @@ namespace Aerochat
             else
             {
                 // token doesn't exist - user hasn't saved it. show the login window
+                CloseSplashIfVisible();
                 LoginWindow = new();
                 LoginWindow.Show();
             }
@@ -444,6 +472,7 @@ namespace Aerochat
             {
                 Login? loginWindow = Windows.OfType<Login>().FirstOrDefault();
                 loginWindow?.Dispatcher.BeginInvoke(() => loginWindow.Close());
+                CloseSplashIfVisible();
                 new Home().Show();
             });
         }

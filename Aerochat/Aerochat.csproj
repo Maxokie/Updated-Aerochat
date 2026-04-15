@@ -812,4 +812,9 @@
 	  </Content>
 	</ItemGroup>
 
+	<ItemGroup>
+	  <None Remove="Resources\splashscreen.png" />
+	  <Resource Include="Resources\splashscreen.png" />
+	</ItemGroup>
+
 </Project>
