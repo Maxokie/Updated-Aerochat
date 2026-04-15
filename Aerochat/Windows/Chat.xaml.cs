@@ -63,7 +63,6 @@ namespace Aerochat.Windows
         bool isDraggingBottomSeparator = false;
         int initialPos = 0;
         private Dictionary<ulong, Timer> timers = new();
-        private VoiceSocket voiceSocket;
         private bool sizeTainted = false;
         private PresenceViewModel? _initialPresence = null;
         private HomeListItemViewModel? _openingItem = null;
@@ -201,15 +200,11 @@ namespace Aerochat.Windows
             });
         }
 
-        private void Chat_Loaded(object sender, RoutedEventArgs e)
+        private void Chat_Loaded(object sender, RoutedEventArgs _)
         {
             try
             {
-#if !AEROCHAT_RC
-                AerochatVersionLink.Text = string.Format(LocalizationManager.Instance["ChatAerochatVersion"], Assembly.GetExecutingAssembly().GetName().Version!.ToString(3));
-#else
-                AerochatVersionLink.Text = string.Format(LocalizationManager.Instance["ChatAerochatVersion"], Assembly.GetExecutingAssembly().GetName().Version!.ToString(3) + " " + AssemblyInfo.RC_REVISION);
-#endif
+                AerochatVersionLink.Text = LocalizationManager.Instance["ChatAttribution"];
 
                 MouseEnter += (s, e) => SetVisibleProperty(true);
                 MouseLeave += (s, e) =>

@@ -21,11 +21,9 @@ using DSharpPlus;
 using System.Security.Cryptography;
 using System.Text;
 using System.Configuration;
-using Aerochat.Settings;
 using System.Windows.Shell;
 using System.Windows.Media.Imaging;
 using DSharpPlus.Enums;
-using Aerovoice.Clients;
 using DiscordProtos.DiscordUsers.V1;
 using System.Buffers.Text;
 using Google.Protobuf;
@@ -56,7 +54,6 @@ namespace Aerochat
 
         public bool LoggingOut = false;
         private Dictionary<UserStatus, ImageSource> _taskbarPresences = new();
-        private VoiceSocket voiceSocket;
 
         private UserStatus? _initialUserStatus = null;
 
@@ -995,7 +992,7 @@ namespace Aerochat
             args.SetResponse(await tcs.Task);
         }
 
-        private void GCRelease(object? sender, System.Timers.ElapsedEventArgs e)
+        private void GCRelease(object? sender, System.Timers.ElapsedEventArgs _)
         {
             ((System.Timers.Timer?)(sender))?.Stop();
             GC.Collect(2, GCCollectionMode.Forced, true, true);

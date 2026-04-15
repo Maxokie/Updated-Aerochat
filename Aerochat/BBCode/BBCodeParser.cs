@@ -54,7 +54,7 @@ namespace Aerochat.BBCode
                                 index++;
                             }
                         }
-                        catch (Exception e)
+                        catch (Exception)
                         {
                             throw new Exception("Unclosed tag");
                         }

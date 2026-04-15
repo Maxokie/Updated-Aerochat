@@ -58,6 +58,8 @@ namespace Aerochat.Windows
         /// </summary>
         const string DYNAMIC_NOTICES_URL = DYNAMIC_BASE_URL + "notices.json";
 
+        const string AEROCHAT_HELP_WIKI_URL = "https://github.com/Maxokie/Updated-Aerochat/wiki/Frequently%E2%80%90asked-questions";
+
         public PresenceViewModel? FindPresenceForUserId(ulong userId)
         {
             foreach (var category in ViewModel.Categories)
@@ -1453,7 +1455,8 @@ namespace Aerochat.Windows
 
             // Help
             var helpMenu = MakeItem("?");
-            helpMenu.Items.Add(MakeItem("Aerochat Help", unimplemented));
+            helpMenu.Items.Add(MakeItem("Aerochat Help", (_, _) =>
+                Process.Start(new ProcessStartInfo(AEROCHAT_HELP_WIKI_URL) { UseShellExecute = true })));
             helpMenu.Items.Add(new Separator());
             helpMenu.Items.Add(MakeItem("About Aerochat", (s, _) => CreditsBtn_Click(s, new RoutedEventArgs())));
             menu.Items.Add(helpMenu);
