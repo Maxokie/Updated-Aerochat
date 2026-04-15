@@ -26,7 +26,7 @@ namespace Aerochat.Windows
 {
     public partial class Login : Window
     {
-        public const string HELP_LOGON_URI = "https://github.com/not-nullptr/Aerochat/wiki/Get-help-logging-in";
+        public const string HELP_LOGON_URI = "https://github.com/Maxokie/Updated-Aerochat/wiki/Get-help-logging-in";
         public const string HELP_GET_TOKEN_URI = HELP_LOGON_URI + "#token-logon";
 
         public LoginWindowViewModel ViewModel { get; set; } = new LoginWindowViewModel();

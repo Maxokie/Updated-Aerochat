@@ -6,13 +6,13 @@ A custom client for Discord that resembles Windows Live Messenger 2009.
 
 To download Aerochat, please click the links in the "Releases" section on the right of this page, or visit the following link:
 
-### [View releases](https://github.com/not-nullptr/Aerochat/releases)
+### [View releases](https://github.com/Maxokie/Updated-Aerochat/releases)
 
 ## Frequently-asked questions
 
 Please see our dedicated page for frequently-asked questions and help.
 
-### [View frequently-asked questions](https://github.com/not-nullptr/Aerochat/wiki/Frequently%E2%80%90asked-questions)
+### [View frequently-asked questions](https://github.com/Maxokie/Updated-Aerochat/wiki/Frequently%E2%80%90asked-questions)
 
 ## Building
 

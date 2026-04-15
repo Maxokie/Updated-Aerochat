@@ -312,32 +312,7 @@
                                                 <Separator />
                                                 <MenuItem x:Name="SignOut" Click="SignOut_Click" Header="{loc:Loc SignOutFromHere}" />
                                                 <Separator />
-                                                <MenuItem Header="{loc:Loc HomeChangeDisplayPicture}" Click="UnimplementedMenuItem_Click">
-                                                    <MenuItem.Style>
-                                                        <Style TargetType="MenuItem">
-                                                            <Style.Triggers>
-                                                                <DataTrigger Binding="{Binding RelativeSource={RelativeSource AncestorType=ContextMenu},Path=PlacementTarget.DataContext.ShowEyecandy}" Value="False">
-                                                                    <Setter Property="Visibility" Value="Collapsed" />
-                                                                </DataTrigger>
-                                                            </Style.Triggers>
-                                                        </Style>
-                                                    </MenuItem.Style>
-                                                </MenuItem>
-                                                <MenuItem Header="{loc:Loc HomeChangeDisplayName}" Click="UnimplementedMenuItem_Click">
-                                                    <MenuItem.Style>
-                                                        <Style TargetType="MenuItem">
-                                                            <Style.Triggers>
-                                                                <DataTrigger Binding="{Binding RelativeSource={RelativeSource AncestorType=ContextMenu},Path=PlacementTarget.DataContext.ShowEyecandy}" Value="False">
-                                                                    <Setter Property="Visibility" Value="Collapsed" />
-                                                                </DataTrigger>
-                                                            </Style.Triggers>
-                                                        </Style>
-                                                    </MenuItem.Style>
-                                                </MenuItem>
-                                                <Separator />
                                                 <MenuItem x:Name="OptionsBtn" Click="OptionsBtn_Click" Header="{loc:Loc HomeOptions}" />
-                                                <Separator />
-                                                <MenuItem x:Name="DebugBtn" Click="DebugBtn_Click" Header="{loc:Loc HomeDebugMenu}" />
                                                 <MenuItem x:Name="CreditsBtn" Click="CreditsBtn_Click" Header="{loc:Loc HomeAboutAndCredits}" />
                                             </ContextMenu>
                                         </Button.ContextMenu>

@@ -32,6 +32,7 @@ using Google.Protobuf;
 using DSharpPlus.EventArgs;
 using Aerochat.Helpers;
 using System.Threading.Channels;
+using System.Threading.Tasks;
 using static ICSharpCode.AvalonEdit.Document.TextDocumentWeakEventManager;
 using Markdig.Extensions.Footnotes;
 using System.IO.Pipes;
@@ -87,7 +88,8 @@ namespace Aerochat
                     {
                         var cat = chat.ViewModel.Categories[0];
                         var item = cat.Items.FirstOrDefault(x => x.Id == Discord.Client.CurrentUser.Id);
-                        if (item is null) return;
+                        if (item is null)
+                            continue;
                         item.Presence.Status = status.ToString();
                     }
                     else
@@ -98,10 +100,11 @@ namespace Aerochat
                 }
                 else if (wnd is Home home)
                 {
-                    if (home.ViewModel.CurrentUser.Presence != null)
+                    if (home.ViewModel.CurrentUser?.Presence != null)
                         home.ViewModel.CurrentUser.Presence.Status = status.ToString();
 
-                    home.TaskbarInfo.Overlay = ((App)(Current))._taskbarPresences[status];
+                    if (((App)Current)._taskbarPresences.TryGetValue(status, out var overlay))
+                        home.TaskbarInfo.Overlay = overlay;
                 }
             }
         }
@@ -279,7 +282,9 @@ namespace Aerochat
 
             var assembly = Assembly.GetExecutingAssembly();
             string resourceName = "Aerochat.Scenes.Scenes.xml";
-            using Stream stream = assembly.GetManifestResourceStream(resourceName);
+            using Stream? stream = assembly.GetManifestResourceStream(resourceName);
+            if (stream is null)
+                throw new InvalidOperationException($"Missing embedded resource '{resourceName}'.");
             using StreamReader reader = new(stream);
             string result = reader.ReadToEnd();
             XDocument doc = XDocument.Parse(result);
@@ -388,12 +393,24 @@ namespace Aerochat
             {
                 Task.Run(async () =>
                 {
-                    AerochatLoginStatus success = await BeginLogin(token);
-                    if (success != AerochatLoginStatus.Success)
+                    try
                     {
-                        Dispatcher.Invoke(() =>
+                        AerochatLoginStatus success = await BeginLogin(token);
+                        if (success != AerochatLoginStatus.Success)
                         {
-                            LoginWindow = new(true, success);
+                            await Dispatcher.InvokeAsync(() =>
+                            {
+                                LoginWindow = new(true, success);
+                                LoginWindow.Show();
+                            });
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        DiagnosticsLog.Swallowed("App.StartAerochatMain: BeginLogin (saved token)", ex);
+                        await Dispatcher.InvokeAsync(() =>
+                        {
+                            LoginWindow = new(true, AerochatLoginStatus.UnknownFailure);
                             LoginWindow.Show();
                         });
                     }
@@ -464,8 +481,43 @@ namespace Aerochat
             return false;
         }
 
+        /// <summary>
+        /// Disconnects and disposes the current <see cref="Discord.Client"/> without leaving a replacement.
+        /// Caller must assign a new client (or placeholder) if the app should keep running.
+        /// </summary>
+        private async Task DisposeDiscordClientSingletonAsync(string context)
+        {
+            DiscordClient? client = Discord.Client;
+            if (client is null)
+                return;
+            try { client.Ready -= OnInitialClientReady; }
+            catch (Exception ex) { DiagnosticsLog.Swallowed($"{context}: Ready -=", ex); }
+            try { await client.DisconnectAsync(); }
+            catch (Exception ex) { DiagnosticsLog.Swallowed($"{context}: DisconnectAsync", ex); }
+            try { client.Dispose(); }
+            catch (Exception ex) { DiagnosticsLog.Swallowed($"{context}: Dispose", ex); }
+            Discord.Client = null;
+        }
+
+        /// <summary>
+        /// After a failed or timed-out login, tear down the client and restore the same empty placeholder
+        /// used elsewhere so static <see cref="Discord.Client"/> is never left in a half-connected state.
+        /// </summary>
+        private async Task ResetDiscordClientAfterFailedLoginAsync(string context)
+        {
+            await DisposeDiscordClientSingletonAsync(context);
+            Discord.Client = new(new()
+            {
+                TokenType = TokenType.User,
+                Token = "",
+            });
+        }
+
         public async Task<AerochatLoginStatus> BeginLogin(string givenToken, bool save = false, UserStatus? status = null)
         {
+            // Replace any existing client (startup placeholder, previous failed attempt, etc.) without leaking sockets.
+            await DisposeDiscordClientSingletonAsync("BeginLogin: replace previous client");
+
             Discord.Client = new(new()
             {
                 Token = givenToken,
@@ -476,32 +528,45 @@ namespace Aerochat
 
             Discord.Client.Ready += OnInitialClientReady;
 
+            Task connectTask = Discord.Client.ConnectAsync(status: status ?? UserStatus.Online);
             try
             {
                 // Bounded wait so the sign-in button never hangs forever on network/TLS failures.
                 // Vista/7 often exceed a short deadline even on a healthy path (see LoginConnectTimeout).
                 int connectTimeoutSec = LoginConnectTimeout.Seconds;
-                var connectTask = Discord.Client.ConnectAsync(status: status ?? UserStatus.Online);
                 var timeoutTask = Task.Delay(TimeSpan.FromSeconds(connectTimeoutSec));
                 var completed = await Task.WhenAny(connectTask, timeoutTask);
                 if (completed == timeoutTask)
+                {
+                    // Stop the attempt before Ready can fire; then observe the connect task to avoid unobserved exceptions.
+                    await ResetDiscordClientAfterFailedLoginAsync("BeginLogin: connection timeout");
+                    try { await connectTask; } catch { /* faulted/cancelled after dispose */ }
                     return AerochatLoginStatus.ConnectionTimeout;
+                }
                 await connectTask; // re-await to propagate any exception
             }
             catch (UnauthorizedException)
             {
+                await ResetDiscordClientAfterFailedLoginAsync("BeginLogin: Unauthorized");
+                try { await connectTask; } catch { }
                 return AerochatLoginStatus.Unauthorized;
             }
             catch (BadRequestException)
             {
+                await ResetDiscordClientAfterFailedLoginAsync("BeginLogin: BadRequest");
+                try { await connectTask; } catch { }
                 return AerochatLoginStatus.BadRequest;
             }
             catch (ServerErrorException)
             {
+                await ResetDiscordClientAfterFailedLoginAsync("BeginLogin: ServerError");
+                try { await connectTask; } catch { }
                 return AerochatLoginStatus.ServerError;
             }
             catch (Exception ex)
             {
+                await ResetDiscordClientAfterFailedLoginAsync("BeginLogin: connect failed");
+                try { await connectTask; } catch { }
                 // TLS/SSL errors vs other network failures (socket, DNS, Discord gateway, etc.)
                 if (ExceptionIndicatesTlsHandshakeProblem(ex))
                     return AerochatLoginStatus.TlsHandshakeFailure;
@@ -647,7 +712,18 @@ namespace Aerochat
                 Discord.Client.MessageCreated += async (s, e) =>
                 {
                     bool isDM = e.Message.Channel is DiscordDmChannel;
-                    bool roleMention = e.Message.MentionedRoles.Any(r => (e.Guild?.GetMemberAsync(Discord.Client.CurrentUser.Id).Result?.Roles.Contains(r)).GetValueOrDefault());
+                    bool roleMention = false;
+                    if (!isDM && e.Guild is { } guild && e.Message.MentionedRoles.Count > 0)
+                    {
+                        DiscordMember? selfMember = null;
+                        if (!guild.Members.TryGetValue(Discord.Client.CurrentUser.Id, out selfMember))
+                            selfMember = await guild.GetMemberAsync(Discord.Client.CurrentUser.Id).ConfigureAwait(false);
+                        if (selfMember is not null)
+                        {
+                            var myRoleIds = new HashSet<ulong>(selfMember.Roles.Select(r => r.Id));
+                            roleMention = e.Message.MentionedRoles.Any(r => myRoleIds.Contains(r.Id));
+                        }
+                    }
                     bool isMention = e.Message.MentionedUsers.Contains(Discord.Client.CurrentUser) || e.Message.MentionEveryone || roleMention;
                     bool isSelf = e.Author.Id == Discord.Client.CurrentUser.Id;
 
@@ -748,9 +824,29 @@ namespace Aerochat
 
             SettingsManager.Save();
 
-            await Discord.Client.DisconnectAsync();
-            Discord.Client.Dispose();
-            Discord.Client = null;
+            if (Discord.Client is not null)
+            {
+                try
+                {
+                    await Discord.Client.DisconnectAsync();
+                }
+                catch (Exception ex)
+                {
+                    DiagnosticsLog.Swallowed("App.SignOut: DisconnectAsync", ex);
+                }
+
+                try
+                {
+                    Discord.Client.Dispose();
+                }
+                catch (Exception ex)
+                {
+                    DiagnosticsLog.Swallowed("App.SignOut: Client.Dispose", ex);
+                }
+
+                Discord.Client = null;
+            }
+
             Discord.Client = new(new()
             {
                 TokenType = TokenType.User,
@@ -816,7 +912,7 @@ namespace Aerochat
                     catch (Exception)
                     {
                         // Ignore any network exception; it simply does not matter.
-                        return;
+                        continue;
                     }
                 }
                 if (newChannel == null) continue;
@@ -907,29 +1003,28 @@ namespace Aerochat
 
         private void ListenForArgumentsMessage(object? state)
         {
-            try
+            while (true)
             {
-                using (NamedPipeServerStream server = new(_appGuid.ToString()))
-                using (StreamReader reader = new(server))
+                try
                 {
-                    server.WaitForConnection();
-
-                    List<string> arguments = new();
-                    while (server.IsConnected)
+                    using (NamedPipeServerStream server = new(_appGuid.ToString()))
+                    using (StreamReader reader = new(server))
                     {
-                        arguments.Add(reader.ReadLine() ?? "");
-                    }
+                        server.WaitForConnection();
 
-                    ThreadPool.QueueUserWorkItem(new WaitCallback(OnArgumentsMessageReceived), arguments.ToArray());
+                        List<string> arguments = new();
+                        while (server.IsConnected)
+                        {
+                            arguments.Add(reader.ReadLine() ?? "");
+                        }
+
+                        ThreadPool.QueueUserWorkItem(new WaitCallback(OnArgumentsMessageReceived), arguments.ToArray());
+                    }
                 }
-            }
-            catch (IOException)
-            {
-                // Ignore.
-            }
-            finally
-            {
-                ListenForArgumentsMessage(null);
+                catch (IOException)
+                {
+                    // Ignore and accept the next connection.
+                }
             }
         }
 
@@ -960,6 +1055,18 @@ namespace Aerochat
             AppDomain.CurrentDomain.UnhandledException += (s, e) =>
             {
                 OnAnyUncaughtException((Exception)e.ExceptionObject);
+            };
+
+            DispatcherUnhandledException += (s, e) =>
+            {
+                OnAnyUncaughtException(e.Exception);
+                e.Handled = true;
+            };
+
+            TaskScheduler.UnobservedTaskException += (s, e) =>
+            {
+                e.SetObserved();
+                DiagnosticsLog.Swallowed("TaskScheduler.UnobservedTaskException", e.Exception);
             };
         }
 

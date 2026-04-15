@@ -77,10 +77,13 @@ namespace Aerochat.Windows
         {
             typingTimer.Elapsed += TypingTimer_Elapsed;
             typingTimer.AutoReset = false;
-            Hide();
             _initialPresence = initialPresence;
             _openingItem = openingItem;
             _chatService = new ChatService(Discord.Client, new DSharpPlusDiscordApi(Discord.Client));
+            InitializeComponent();
+            DataContext = ViewModel;
+            Hide();
+
             if (allowDefault)
             {
                 SettingsManager.Instance.SelectedChannels.TryGetValue(id, out ulong channelId);
@@ -114,9 +117,6 @@ namespace Aerochat.Windows
                 ChannelId = id;
             }
 
-           
-            InitializeComponent();
-            DataContext = ViewModel;
 
             // Ensure that visual elements that aren't supposed to be initially
             // displayed are not initially displayed:
@@ -283,18 +283,26 @@ namespace Aerochat.Windows
             if (isDM && !isGroupChat)
             {
                 recipient = ((DiscordDmChannel)newChannel).Recipients.FirstOrDefault(x => x.Id != currentUser.Id);
-                if (!_chatService.TryGetCachedUser(recipient?.Id ?? 0, out recipient) || recipient?.BannerColor == null)
+                if (recipient is not null)
                 {
-                    // GetUserProfileAsync can fail if the recipient is not friends with you and shares no
-                    // mutual servers. We need to fail gracefully in this case.
-                    try
+                    ulong recipientId = recipient.Id;
+                    if (!_chatService.TryGetCachedUser(recipientId, out DiscordUser? cachedRecipient) || cachedRecipient?.BannerColor == null)
                     {
-                        DiscordProfile userProfile = await _chatService.GetUserProfileAsync(recipient.Id, true);
-                        recipient = userProfile.User;
+                        // GetUserProfileAsync can fail if the recipient is not friends with you and shares no
+                        // mutual servers. We need to fail gracefully in this case.
+                        try
+                        {
+                            DiscordProfile userProfile = await _chatService.GetUserProfileAsync(recipientId, true);
+                            recipient = userProfile.User;
+                        }
+                        catch (NotFoundException)
+                        {
+                            recipient = cachedRecipient ?? recipient;
+                        }
                     }
-                    catch (NotFoundException)
+                    else
                     {
-                        // Ignore.
+                        recipient = cachedRecipient;
                     }
                 }
             }
@@ -567,7 +575,8 @@ namespace Aerochat.Windows
                 }
                 else
                 {
-                    _ = Application.Current.Dispatcher.BeginInvoke(() => ShowErrorDialog(LocalizationManager.Instance["ChatErrorUnauthorized"] + "\n\nTechnical details: " + e.WebResponse.Response));
+                    string details = e.WebResponse?.Response ?? e.Message;
+                    _ = Application.Current.Dispatcher.BeginInvoke(() => ShowErrorDialog(LocalizationManager.Instance["ChatErrorUnauthorized"] + "\n\nTechnical details: " + details));
                 }
             }
             catch (Exception e)
@@ -750,9 +759,10 @@ namespace Aerochat.Windows
                 TypingUsers.Remove(args.Author);
             }
 
+            DiscordUser? currentUserForSounds = Discord.Client.CurrentUser;
             await Dispatcher.BeginInvoke(() =>
             {
-                if (_chatService.GetCurrentUser().Result.Presence.Status == UserStatus.DoNotDisturb)
+                if (currentUserForSounds?.Presence?.Status == UserStatus.DoNotDisturb)
                 {
                     return;
                 }
@@ -763,9 +773,9 @@ namespace Aerochat.Windows
                 }
                 else
                 {
-                    if (IsActive && message.Author?.Id != _chatService.GetCurrentUser().Result.Id)
+                    if (currentUserForSounds is not null && IsActive && message.Author?.Id != currentUserForSounds.Id)
                     {
-                        if (SettingsManager.Instance.NotifyChat || message.MessageEntity.MentionedUsers.Contains(_chatService.GetCurrentUser().Result)) // IDK
+                        if (SettingsManager.Instance.NotifyChat || message.MessageEntity.MentionedUsers.Contains(currentUserForSounds))
                             chatSoundPlayer.Open(SoundHelper.GetSoundUri("type.wav"));
                     }
                 }
@@ -821,7 +831,8 @@ namespace Aerochat.Windows
         private async Task OnType(DSharpPlus.DiscordClient sender, DSharpPlus.EventArgs.TypingStartEventArgs args)
         {
             if (args.Channel.Id != ChannelId) return;
-            if (args.User.Id == _chatService.GetCurrentUser().Result.Id) return;
+            var me = Discord.Client.CurrentUser;
+            if (me is null || args.User.Id == me.Id) return;
             await Dispatcher.BeginInvoke(() =>
             {
                 if (timers.TryGetValue(args.User.Id, out System.Timers.Timer? timer))
@@ -1061,7 +1072,8 @@ namespace Aerochat.Windows
 
         private void OnClientSpeakingChanged(object? sender, bool isSpeaking)
         {
-            var currentUser = _chatService.GetCurrentUser().Result;
+            var currentUser = Discord.Client.CurrentUser;
+            if (currentUser is null) return;
             Dispatcher.BeginInvoke(() => UpdateSpeakingState(currentUser.Id, isSpeaking));
         }
 
@@ -2441,6 +2453,8 @@ namespace Aerochat.Windows
                 return;
 
             MessageViewModel? vm = grid.DataContext as MessageViewModel;
+            if (vm is null)
+                return;
 
             ContextMenu contextMenu = grid.ContextMenu;
             contextMenu.DataContext = vm;
@@ -2463,7 +2477,8 @@ namespace Aerochat.Windows
                 // Build reactions context menu:
             }
 
-            bool isOwnMessage = vm.Author.Id == _chatService.GetCurrentUser().Result.Id;
+            var me = Discord.Client.CurrentUser;
+            bool isOwnMessage = me is not null && vm.Author.Id == me.Id;
 
             MenuItem editButton = (MenuItem)FindContextMenuItemName(contextMenu, "EditButton");
             editButton.Visibility = isOwnMessage

@@ -1,18 +1,10 @@
 [
 	{
-		"date": 1751552418000,
-		"body": "[b][color color=#1D80A6]Aerochat v0.2.3[/color][/b]: We spent a long time focusing on improving the performance and stability of the client in this version. Hopefully you'll find things feeling a lot smoother going forward."
+		"date": 1769900000000,
+		"body": "[b][color color=#1D80A6]Aerochat v0.3.0[/color][/b]: First version of Updated Aerochat, with some new options and features, as well as improved stability."
 	},
 	{
 		"date": 1751552418000,
-		"body": "[b]Did you submit an ad in the past?[/b] We are trying to fill out past credits. Due to improper management in the past, we lost credits for all ads submitted prior to September 27th, 2024. If you submitted an ad before this date, please contact us so we can restore credit."
-	},
-	{
-		"date": 1751552418000,
-		"body" :"[b]Interested in Aerochat development?[/b] Aerochat is free-and-open-source software which is maintained through community contributions. Please check out [link url=https://github.com/not-nullptr/Aerochat]our GitHub repository[/link] if you'd like to help out. You don't have to be a skilled programmer or anything."
-	},
-	{
-		"date": 1765649921000,
-		"body": "[b]What happened to the Discord server?[/b] [link url=https://github.com/not-nullptr/Aerochat/issues/160#issuecomment-3649680314]See motivations for its deletion here.[/link] We are sorry for the inconvenience. Perhaps tentatively, please submit scenes and ads [link url=https://github.com/not-nullptr/Aerochat/pulls]through GitHub pull requests on the Aerochat repository[/link]."
+		"body" :"[b]Interested in Aerochat development?[/b] Aerochat is free-and-open-source software which is maintained through community contributions. Please check out [link url=https://github.com/Maxokie/Updated-Aerochat]our GitHub repository[/link] if you'd like to help out. You don't have to be a skilled programmer or anything."
 	}
 ]

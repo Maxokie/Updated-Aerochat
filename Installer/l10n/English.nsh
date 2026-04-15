@@ -19,7 +19,7 @@ Click Next to continue."
 !insertmacro LANG_STRING STRING_NEEDSKB2533623_DESCRIPTION "Your system requires updates in order to run Aerochat."
 !insertmacro LANG_STRING STRING_NEEDSKB2533623_BODY "Your older Windows operating system is lacking the quality-of-life update $\"KB2533623$\", which supplements the functionality of the operating system with new security features.$\r$\n$\r$\nSince the .NET Runtime assumes these security features are available and does not fall back to older functionality, you will have to install this update in order to use Aerochat."
 !insertmacro LANG_STRING STRING_NEEDSKB2533623_GETHELP_BUTTON "Get help installing this update"
-!insertmacro LANG_STRING STRING_NEEDSKB2533623_GETHELP_LINK "https://github.com/not-nullptr/Aerochat/wiki/Frequently%E2%80%90asked-questions#q-im-on-windows-7-and-nothing-happens-when-i-try-to-open-aerochat"
+!insertmacro LANG_STRING STRING_NEEDSKB2533623_GETHELP_LINK "https://github.com/Maxokie/Updated-Aerochat/wiki/Frequently%E2%80%90asked-questions#q-im-on-windows-7-and-nothing-happens-when-i-try-to-open-aerochat"
 !insertmacro LANG_STRING STRING_NEEDSKB2533623_CONTINUEANYWAY_BUTTON "Continue anyway"
 
 !insertmacro LANG_STRING STRING_CONTINUEANYWAY_BODY "Are you sure you want to continue? If you continue, Aerochat may not work correctly."

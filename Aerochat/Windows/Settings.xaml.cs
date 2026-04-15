@@ -130,12 +130,26 @@ namespace Aerochat.Windows
                     {
                         var displayNames = attribute.GetDisplayNames();
                         var currentIndex = (int)(prop.GetValue(SettingsManager.Instance) ?? 0);
+                        if (displayNames.Count > 0)
+                        {
+                            if (currentIndex < 0) currentIndex = 0;
+                            else if (currentIndex >= displayNames.Count) currentIndex = displayNames.Count - 1;
+                            var saved = (int)(prop.GetValue(SettingsManager.Instance) ?? 0);
+                            if (saved != currentIndex)
+                            {
+                                prop.SetValue(SettingsManager.Instance, currentIndex);
+                                SettingsManager.Save();
+                            }
+                        }
                         settings.Add(new SettingViewModel
                         {
                             Key = prop.GetCustomAttribute<SettingsAttribute>()!.DisplayName,
                             Name = TranslateSettingName(prop),
-                            Type = prop.PropertyType.Name,
-                            DefaultValue = displayNames.ElementAtOrDefault(SettingsManager.Instance.InputDeviceIndex) ?? LocalizationManager.Instance["SettingsUnknownDevice"],
+                            // Must match Settings.xaml DataTrigger for MultiStringInt (ComboBox + StringValues), not Int32 (TextBox).
+                            Type = "MultiStringInt",
+                            DefaultValue = displayNames.Count > 0
+                                ? displayNames[currentIndex]
+                                : LocalizationManager.Instance["SettingsUnknownDevice"],
                             StringValues = new ObservableCollection<string>(displayNames),
                         });
                     }

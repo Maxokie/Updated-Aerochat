@@ -221,6 +221,11 @@ namespace Aerochat.Windows
                     if (split.StartsWith('<') && split.EndsWith('>'))
                     {
                         string id = split.Replace("<", "").Replace(">", "");
+                        if (string.IsNullOrEmpty(id))
+                        {
+                            FilteredMessage += $" {split}";
+                            continue;
+                        }
 
                         if (id.ElementAt(0) == '@')
                         {
@@ -237,13 +242,21 @@ namespace Aerochat.Windows
                             }
                             else
                             {
-                                ulong.TryParse(id, out ulong parsedId);
-                                var user = Discord.Client.GetUserProfileAsync(parsedId).GetAwaiter().GetResult().User;
-
-                                if (user == null)
+                                if (!ulong.TryParse(id, out ulong parsedId))
+                                {
                                     FilteredMessage += " @unknown-user";
+                                }
                                 else
-                                    FilteredMessage += $" @{user.DisplayName}";
+                                {
+                                    // Avoid GetUserProfileAsync().GetResult() on the UI thread (deadlock + network failures).
+                                    DiscordUser? user = message.MentionedUsers?.FirstOrDefault(u => u.Id == parsedId);
+                                    if (user is null && Discord.Client is not null)
+                                        Discord.Client.TryGetCachedUser(parsedId, out user);
+                                    if (user is null)
+                                        FilteredMessage += " @unknown-user";
+                                    else
+                                        FilteredMessage += $" @{user.DisplayName}";
+                                }
                             }
                         }
                         else if (id.ElementAt(0) == '#')

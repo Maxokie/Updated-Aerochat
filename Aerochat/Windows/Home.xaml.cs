@@ -14,6 +14,8 @@ using System.IO;
 using System.Net.Http;
 using System.Reflection;
 using System.Text.Json;
+using System.Threading;
+using System.Threading.Tasks;
 using System.Timers;
 using System.Windows;
 using System.Windows.Controls;
@@ -37,12 +39,14 @@ namespace Aerochat.Windows
 
         private static List<AdViewModel> _ads = new();
 
+        private CancellationTokenSource? _homeDynamicRefreshCts;
+
         public int AdIndex { get; set; } = 0;
 
         /// <summary>
         /// The base URL used for dynamic notices and news content.
         /// </summary>
-        const string DYNAMIC_BASE_URL = "https://raw.githubusercontent.com/not-nullptr/Aerochat/refs/heads/main/Dynamic/";
+        const string DYNAMIC_BASE_URL = "https://raw.githubusercontent.com/Maxokie/Updated-Aerochat/refs/heads/main/Dynamic/";
 
         /// <summary>
         /// The URL for remote dynamic news content shown along the bottom of the client.
@@ -73,31 +77,49 @@ namespace Aerochat.Windows
         public Home()
         {
             InitializeComponent();
-
-            // Invoke used to prevent the constructor from returning before our work is done.
-            Dispatcher.Invoke(async () =>
+            Closing += (_, _) =>
             {
+                try { _homeDynamicRefreshCts?.Cancel(); }
+                catch (Exception ex) { DiagnosticsLog.Swallowed("Home.Closing: cancel dynamic refresh", ex); }
+                _homeDynamicRefreshCts?.Dispose();
+                _homeDynamicRefreshCts = null;
+            };
+            Loaded += HomeListView_Loaded;
+            Loaded += Home_InitializeAfterFirstLoad;
+        }
+
+        private async void Home_InitializeAfterFirstLoad(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                Loaded -= Home_InitializeAfterFirstLoad;
+
+                if (Discord.Client?.CurrentUser is null)
+                {
+                    DiagnosticsLog.Swallowed("Home.Home_InitializeAfterFirstLoad", new InvalidOperationException("Discord client or current user is not available."));
+                    return;
+                }
+
                 ViewModel.CurrentUser = UserViewModel.FromUser(Discord.Client.CurrentUser);
 
-                // Load initial presence:
                 PreloadedUserSettings? userSettings = DiscordUserSettingsManager.Instance.UserSettingsProto;
                 if (userSettings is not null)
                     ViewModel.CurrentUser.Presence = PresenceViewModel.GetPresenceForCurrentUser(userSettings);
 
                 ViewModel.Categories.Clear();
                 DataContext = ViewModel;
-                Loaded += HomeListView_Loaded;
 
-                // Set default visibilities of optional homepage elements:
                 UpdateAdVisibility();
                 UpdateNewsVisibility();
 
                 await Client_Ready(Discord.Client, null);
 
-                // Subscribe to changes in the DisplayAds property
                 SettingsManager.Instance.PropertyChanged += OnSettingsChange;
-
-            });
+            }
+            catch (Exception ex)
+            {
+                DiagnosticsLog.Swallowed("Home.Home_InitializeAfterFirstLoad", ex);
+            }
         }
 
         private void UpdateAdVisibility()
@@ -165,7 +187,12 @@ namespace Aerochat.Windows
 
         private int GetNextAdIndex()
         {
+            if (_ads.Count == 0)
+                return 0;
+
             int totalWeight = adWeights.Values.Sum();
+            if (totalWeight <= 0)
+                return 0;
 
             int randomWeight = _random.Next(totalWeight);
 
@@ -189,45 +216,57 @@ namespace Aerochat.Windows
                 newsTimer.Start();
                 var assembly = Assembly.GetExecutingAssembly();
                 string resourceName = "Aerochat.Ads.Ads.xml";
-                using Stream stream = assembly.GetManifestResourceStream(resourceName);
-                using StreamReader reader = new(stream);
-                string result = reader.ReadToEnd();
-                XDocument doc = XDocument.Parse(result);
-                foreach (XElement adXml in doc.Root?.Elements() ?? [])
+                using (Stream? stream = assembly.GetManifestResourceStream(resourceName))
                 {
-                    AdViewModel ad = AdViewModel.FromAd(adXml);
-                    _ads.Add(ad);
-                }
-                Random random = new();
-                AdIndex = random.Next(_ads.Count);
-
-                for (int i = 0; i < _ads.Count; i++)
-                {
-                    adWeights[i] = 1;
+                    if (stream is not null)
+                    {
+                        using StreamReader reader = new(stream);
+                        string result = reader.ReadToEnd();
+                        XDocument doc = XDocument.Parse(result);
+                        foreach (XElement adXml in doc.Root?.Elements() ?? [])
+                        {
+                            AdViewModel ad = AdViewModel.FromAd(adXml);
+                            _ads.Add(ad);
+                        }
+                    }
                 }
 
-                _adTimer.Elapsed += (s, e) =>
+                if (_ads.Count > 0)
                 {
-                    AdIndex = GetNextAdIndex();
+                    Random random = new();
+                    AdIndex = random.Next(_ads.Count);
 
                     for (int i = 0; i < _ads.Count; i++)
                     {
-                        if (i == AdIndex)
-                        {
-                            adWeights[i] = 1;
-                        }
-                        else
-                        {
-                            adWeights[i]++;
-                        }
+                        adWeights[i] = 1;
                     }
 
-                    AdViewModel adVm = _ads[AdIndex];
-                    ViewModel.Ad = adVm;
-                };
+                    _adTimer.Elapsed += (s, e) =>
+                    {
+                        if (_ads.Count == 0)
+                            return;
 
-                ViewModel.Ad = _ads[AdIndex];
-                _adTimer.Start();
+                        AdIndex = GetNextAdIndex();
+
+                        for (int i = 0; i < _ads.Count; i++)
+                        {
+                            if (i == AdIndex)
+                            {
+                                adWeights[i] = 1;
+                            }
+                            else
+                            {
+                                adWeights[i]++;
+                            }
+                        }
+
+                        AdViewModel adVm = _ads[AdIndex];
+                        ViewModel.Ad = adVm;
+                    };
+
+                    ViewModel.Ad = _ads[AdIndex];
+                    _adTimer.Start();
+                }
 
                 ViewModel.Categories.Insert(0, new HomeListViewCategory { Name = "Favorites" });
                 ViewModel.Categories.Add(new HomeListViewCategory { Name = "Conversations" });
@@ -270,16 +309,30 @@ namespace Aerochat.Windows
                 Show();
                 Focus();
 
-                Task.Run(async () =>
+                _homeDynamicRefreshCts?.Cancel();
+                _homeDynamicRefreshCts?.Dispose();
+                _homeDynamicRefreshCts = new CancellationTokenSource();
+                var refreshToken = _homeDynamicRefreshCts.Token;
+                _ = Task.Run(async () =>
                 {
-                    while (true)
+                    while (!refreshToken.IsCancellationRequested)
                     {
-                        _ = CheckForUpdates();
-                        _ = GetNewNews();
-                        _ = GetNewNotices();
-                        await Task.Delay(60 * 5 * 1000);
+                        try { await CheckForUpdates(); }
+                        catch (Exception ex) { DiagnosticsLog.Swallowed("Home: CheckForUpdates (background)", ex); }
+                        try { await GetNewNews(); }
+                        catch (Exception ex) { DiagnosticsLog.Swallowed("Home: GetNewNews (background)", ex); }
+                        try { await GetNewNotices(); }
+                        catch (Exception ex) { DiagnosticsLog.Swallowed("Home: GetNewNotices (background)", ex); }
+                        try
+                        {
+                            await Task.Delay(60 * 5 * 1000, refreshToken);
+                        }
+                        catch (OperationCanceledException)
+                        {
+                            break;
+                        }
                     }
-                });
+                }, refreshToken);
 
 #if AEROCHAT_RC && !DEVELOPER_PRERELEASE
                 Dialog betaNoticeDlg = new(
@@ -311,11 +364,16 @@ namespace Aerochat.Windows
 
         private void OnUserSettingsUpdated(object? sender, DiscordUserSettingsUpdateEventArgs e)
         {
+            if (ViewModel.CurrentUser is null)
+                return;
             ViewModel.CurrentUser.Presence = PresenceViewModel.GetPresenceForCurrentUser(e.NewSettings);
         }
 
         private void Image_PreviewMouseRightButtonDown(object sender, MouseButtonEventArgs e)
         {
+            if (_ads.Count == 0)
+                return;
+
             AdIndex = GetNextAdIndex();
 
             for (int i = 0; i < _ads.Count; i++)
@@ -391,46 +449,47 @@ namespace Aerochat.Windows
         /// </summary>
         public async Task GetNewNews()
         {
-            var httpClient = new HttpClient();
+            using var httpClient = new HttpClient();
             httpClient.DefaultRequestHeaders.Add("User-Agent", GetAerochatUserAgent());
             try
             {
-                var response = await httpClient.GetAsync(DYNAMIC_NEWS_URL + "?breaker=" + DateTimeOffset.Now.ToUnixTimeMilliseconds());
-                if (response.IsSuccessStatusCode)
+                using var response = await httpClient.GetAsync(DYNAMIC_NEWS_URL + "?breaker=" + DateTimeOffset.Now.ToUnixTimeMilliseconds());
+                if (!response.IsSuccessStatusCode)
+                    return;
+
+                string body = await response.Content.ReadAsStringAsync();
+                try
                 {
-                    try
+                    using JsonDocument news = JsonDocument.Parse(body, new JsonDocumentOptions()
                     {
-                        var news = JsonDocument.Parse(await response.Content.ReadAsStringAsync(), new JsonDocumentOptions()
+                        AllowTrailingCommas = true,
+                        CommentHandling = JsonCommentHandling.Skip,
+                    });
+                    var newsList = new List<NewsViewModel>();
+                    foreach (var n in news.RootElement.EnumerateArray())
+                    {
+                        newsList.Add(NewsViewModel.FromNews(n));
+                    }
+
+                    _ = Dispatcher.BeginInvoke(() =>
+                    {
+                        ViewModel.News.Clear();
+                        foreach (var n in newsList)
                         {
-                            AllowTrailingCommas = true,
-                            CommentHandling = JsonCommentHandling.Skip,
-                        });
-                        var newsList = new List<NewsViewModel>();
-                        foreach (var n in news.RootElement.EnumerateArray())
-                        {
-                            newsList.Add(NewsViewModel.FromNews(n));
+                            ViewModel.News.Add(n);
                         }
 
-                        _ = Dispatcher.BeginInvoke(() =>
-                        {
-                            ViewModel.News.Clear();
-                            foreach (var n in newsList)
-                            {
-                                ViewModel.News.Add(n);
-                            }
-
-                            ViewModel.CurrentNews = ViewModel.News.FirstOrDefault(x => x.Date == ViewModel.CurrentNews?.Date) ?? ViewModel.News.FirstOrDefault();
-                        });
-                    }
-                    catch (JsonException)
-                    {
-                        // The content is not valid JSON. Ignore.
-                    }
+                        ViewModel.CurrentNews = ViewModel.News.FirstOrDefault(x => x.Date == ViewModel.CurrentNews?.Date) ?? ViewModel.News.FirstOrDefault();
+                    });
+                }
+                catch (JsonException ex)
+                {
+                    DiagnosticsLog.Swallowed("Home.GetNewNews: invalid JSON", ex);
                 }
             }
-            catch (HttpRequestException)
+            catch (HttpRequestException ex)
             {
-                // Doesn't matter.
+                DiagnosticsLog.Swallowed("Home.GetNewNews: HTTP", ex);
             }
         }
 
@@ -442,50 +501,53 @@ namespace Aerochat.Windows
             var noticesList = new List<NoticeViewModel>();
             
             // Get the latest notices from the GitHub repo.
-            var httpClient = new HttpClient();
+            using var httpClient = new HttpClient();
             httpClient.DefaultRequestHeaders.Add("User-Agent", GetAerochatUserAgent());
             try
             {
-                var response = await httpClient.GetAsync(DYNAMIC_NOTICES_URL + "?breaker=" + DateTimeOffset.Now.ToUnixTimeMilliseconds());
-                if (response.IsSuccessStatusCode)
-                {
-                    try
-                    {
-                        var notices = JsonDocument.Parse(await response.Content.ReadAsStringAsync(), new JsonDocumentOptions()
-                        {
-                            AllowTrailingCommas = true,
-                            CommentHandling = JsonCommentHandling.Skip,
-                        });
-                        // this is an array so iterate through it
-                        foreach (var notice in notices.RootElement.EnumerateArray())
-                        {
-                            var noticeViewModel = NoticeViewModel.FromNotice(notice);
-                            if (!noticeViewModel.IsTargeted || SettingsManager.Instance.ViewedNotices.Contains(noticeViewModel.Date)) continue;
-                            noticesList.Add(noticeViewModel);
-                        }
+                using var response = await httpClient.GetAsync(DYNAMIC_NOTICES_URL + "?breaker=" + DateTimeOffset.Now.ToUnixTimeMilliseconds());
+                if (!response.IsSuccessStatusCode)
+                    return;
 
-                        _ = Dispatcher.BeginInvoke(() =>
-                        {
-                            ViewModel.Notices.Clear();
-                            foreach (var n in noticesList)
-                            {
-                                ViewModel.Notices.Add(n);
-                            }
-                        });
-                    }
-                    catch (JsonException)
+                string body = await response.Content.ReadAsStringAsync();
+                try
+                {
+                    using JsonDocument notices = JsonDocument.Parse(body, new JsonDocumentOptions()
                     {
-                        // The content is not valid JSON. Ignore.
+                        AllowTrailingCommas = true,
+                        CommentHandling = JsonCommentHandling.Skip,
+                    });
+                    // this is an array so iterate through it
+                    foreach (var notice in notices.RootElement.EnumerateArray())
+                    {
+                        var noticeViewModel = NoticeViewModel.FromNotice(notice);
+                        if (!noticeViewModel.IsTargeted || SettingsManager.Instance.ViewedNotices.Contains(noticeViewModel.Date)) continue;
+                        noticesList.Add(noticeViewModel);
                     }
+
+                    _ = Dispatcher.BeginInvoke(() =>
+                    {
+                        ViewModel.Notices.Clear();
+                        foreach (var n in noticesList)
+                        {
+                            ViewModel.Notices.Add(n);
+                        }
+                    });
+                }
+                catch (JsonException ex)
+                {
+                    DiagnosticsLog.Swallowed("Home.GetNewNotices: invalid JSON", ex);
                 }
             }
-            catch (HttpRequestException)
+            catch (HttpRequestException ex)
             {
-                // Doesn't matter.
+                DiagnosticsLog.Swallowed("Home.GetNewNotices: HTTP", ex);
             }
         }
         private void CloseNoticeButton_PreviewMouseLeftButtonUp(object sender, MouseButtonEventArgs e)
         {
+            if (ViewModel.Notices.Count == 0)
+                return;
             var notice = ViewModel.Notices[0];
             SettingsManager.Instance.ViewedNotices.Add(notice.Date);
             ViewModel.Notices.Remove(notice);
@@ -508,34 +570,42 @@ namespace Aerochat.Windows
             HttpResponseMessage response;
             try
             {
-                response = await httpClient.GetAsync("https://api.github.com/repos/not-nullptr/Aerochat/tags");
+                response = await httpClient.GetAsync("https://api.github.com/repos/Maxokie/Updated-Aerochat/tags");
             }
             catch (Exception)
             {
                 // Ignore networking exception.
+                httpClient.Dispose();
                 return;
             }
 
             if (!response.IsSuccessStatusCode)
             {
                 // Ignore unsuccessful requests.
+                response.Dispose();
+                httpClient.Dispose();
                 return;
             }
-
-            JsonDocument tags = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
 
             string? latestTag;
             try
             {
-                latestTag = tags.RootElement[0].GetProperty("name").GetString();
+                using (JsonDocument tags = JsonDocument.Parse(await response.Content.ReadAsStringAsync()))
+                {
+                    latestTag = tags.RootElement[0].GetProperty("name").GetString();
+                }
             }
             catch (Exception)
             {
+                httpClient.Dispose();
                 return;
             }
 
             if (latestTag == null)
+            {
+                httpClient.Dispose();
                 return;
+            }
 
 #if !AEROCHAT_RC
             var localVersion = Assembly.GetExecutingAssembly().GetName().Version;
@@ -543,7 +613,10 @@ namespace Aerochat.Windows
             var localVersion = Version.Parse(AssemblyInfo.RC_LAST_VERSION);
 #endif
             if (localVersion == null)
+            {
+                httpClient.Dispose();
                 return;
+            }
 
             string latestTagVersion = latestTag.Split('-')[0];
             
@@ -575,74 +648,82 @@ namespace Aerochat.Windows
                     }
                     _ = Task.Run(async () =>
                     {
-                        HttpResponseMessage releaseResponse;
                         try
                         {
-                            releaseResponse = await httpClient.GetAsync($"https://api.github.com/repos/not-nullptr/Aerochat/releases/tags/{latestTag}");
-                        }
-                        catch (Exception)
-                        {
-                            await ShowAutomaticUpdateDownloadFailureDialog(latestTag);
-                            Dispatcher.BeginInvoke(Close);
-                            return;
-                        }
-
-                        JsonDocument release = JsonDocument.Parse(await releaseResponse.Content.ReadAsStringAsync());
-                        string? assetUrl = null;
-                        try
-                        {
-                            var assets = release.RootElement.GetProperty("assets");
-
-                            if (assets.GetArrayLength() > 0)
+                            HttpResponseMessage releaseResponse;
+                            try
                             {
-                                assetUrl = assets[0].GetProperty("browser_download_url").GetString();
+                                releaseResponse = await httpClient.GetAsync($"https://api.github.com/repos/Maxokie/Updated-Aerochat/releases/tags/{latestTag}");
+                            }
+                            catch (Exception)
+                            {
+                                await ShowAutomaticUpdateDownloadFailureDialog(latestTag);
+                                Dispatcher.BeginInvoke(Close);
+                                return;
+                            }
+
+                            using (JsonDocument release = JsonDocument.Parse(await releaseResponse.Content.ReadAsStringAsync()))
+                            {
+                                string? assetUrl = null;
+                                try
+                                {
+                                    var assets = release.RootElement.GetProperty("assets");
+
+                                    if (assets.GetArrayLength() > 0)
+                                    {
+                                        assetUrl = assets[0].GetProperty("browser_download_url").GetString();
+                                    }
+                                }
+                                catch (Exception)
+                                {
+                                    await ShowAutomaticUpdateDownloadFailureDialog(latestTag);
+                                    Dispatcher.BeginInvoke(Close);
+                                    return;
+                                }
+
+                                if (assetUrl == null)
+                                {
+                                    await ShowAutomaticUpdateDownloadFailureDialog(latestTag);
+                                    Dispatcher.BeginInvoke(Close);
+                                    return;
+                                }
+
+                                // get a temp folder
+                                string tempFolder = Path.GetTempPath();
+                                string tempSetupExePath = Path.Combine(tempFolder, "aerochat-setup.exe");
+
+                                // download the asset to the temp folder
+                                var asset = await httpClient.GetAsync(assetUrl);
+                                byte[] assetBytes = await asset.Content.ReadAsByteArrayAsync();
+
+                                try
+                                {
+                                    File.WriteAllBytes(tempSetupExePath, assetBytes);
+
+                                    // ShellExecute will open the UAC prompt, rather than trying to open the application with the same
+                                    // permissions as the current process and potentially failing.
+                                    Shell32.ShellExecute(HWND.NULL, "open", tempSetupExePath, null, null, ShowWindowCommand.SW_SHOWNORMAL);
+                                }
+                                catch (Exception)
+                                {
+                                    await ShowAutomaticUpdateDownloadFailureDialog(latestTag);
+                                    Dispatcher.BeginInvoke(Close);
+                                    return;
+                                }
+
+                                Dispatcher.BeginInvoke(Close);
                             }
                         }
-                        catch (Exception)
+                        finally
                         {
-                            await ShowAutomaticUpdateDownloadFailureDialog(latestTag);
-                            Dispatcher.BeginInvoke(Close);
-                            return;
+                            httpClient.Dispose();
                         }
-
-                        if (assetUrl == null)
-                        {
-                            await ShowAutomaticUpdateDownloadFailureDialog(latestTag);
-                            Dispatcher.BeginInvoke(Close);
-                            return;
-                        }
-
-                        // get a temp folder
-                        string tempFolder = Path.GetTempPath();
-                        string tempSetupExePath = Path.Combine(tempFolder, "aerochat-setup.exe");
-
-                        // download the asset to the temp folder
-                        var asset = await httpClient.GetAsync(assetUrl);
-                        byte[] assetBytes = await asset.Content.ReadAsByteArrayAsync();
-
-                        try
-                        {
-                            File.WriteAllBytes(tempSetupExePath, assetBytes);
-
-                            // ShellExecute will open the UAC prompt, rather than trying to open the application with the same
-                            // permissions as the current process and potentially failing.
-                            Shell32.ShellExecute(HWND.NULL, "open", tempSetupExePath, null, null, ShowWindowCommand.SW_SHOWNORMAL);
-                        }
-                        catch (Exception)
-                        {
-                            await ShowAutomaticUpdateDownloadFailureDialog(latestTag);
-                            Dispatcher.BeginInvoke(Close);
-                            return;
-                        }
-
-                        Dispatcher.BeginInvoke(Close);
                     });
                 });
             }
             else
             {
                 httpClient.Dispose();
-                tags.Dispose();
             }
         }
 
@@ -662,7 +743,7 @@ namespace Aerochat.Windows
                 failureDialog.ShowDialog();
 
                 Shell32.ShellExecute(HWND.NULL, "open",
-                    $"https://github.com/not-nullptr/Aerochat/releases/tag/{latestTag}", null, null,
+                    $"https://github.com/Maxokie/Updated-Aerochat/releases/tag/{latestTag}", null, null,
                     ShowWindowCommand.SW_SHOWNORMAL
                 );
             });
@@ -1151,7 +1232,7 @@ namespace Aerochat.Windows
 
         private NonNativeTooltip? tooltip;
         private HomeListItemViewModel? _lastHoveredItem;
-        private Button _lastHoveredControl;
+        private Button? _lastHoveredControl;
 
         private void MouseEnteredUser(object sender, MouseEventArgs e)
         {
@@ -1161,9 +1242,11 @@ namespace Aerochat.Windows
             _lastHoveredItem = item;
             // traverse the parents till we find a Button
             var frameworkElement = sender as FrameworkElement;
-            while (frameworkElement != null && !(frameworkElement is Button))
+            while (frameworkElement != null && frameworkElement is not Button)
                 frameworkElement = VisualTreeHelper.GetParent(frameworkElement) as FrameworkElement;
-            _lastHoveredControl = (Button)frameworkElement;
+            if (frameworkElement is not Button btn)
+                return;
+            _lastHoveredControl = btn;
 
             _hoverTimer.Stop();
             _hoverTimer.Start();
@@ -1184,6 +1267,9 @@ namespace Aerochat.Windows
         {
             Dispatcher.BeginInvoke(() =>
             {
+                if (_lastHoveredControl is null)
+                    return;
+
                 // if there's a tooltip already open, close it
                 tooltip?.Close();
                 tooltip = new(new()
@@ -1415,11 +1501,6 @@ namespace Aerochat.Windows
         private void CreditsBtn_Click(object sender, RoutedEventArgs e)
         {
             new About().ShowDialog();
-        }
-
-        private void DebugBtn_Click(object sender, RoutedEventArgs e)
-        {
-            new DebugWindow().Show();
         }
 
         private void PreviousNewsItem_Click(object sender, RoutedEventArgs e)
