@@ -8,14 +8,24 @@
 
 Unicode true
 Name "Aerochat"
-Outfile "../Output/aerochat-setup.exe"
+!ifndef AEROCHAT_OUTFILE
+    !define AEROCHAT_OUTFILE "../Output/aerochat-setup.exe"
+!endif
+Outfile "${AEROCHAT_OUTFILE}"
 RequestExecutionLevel user
 ManifestSupportedOS WinVista
 
-!define AEROCHAT_BIN_FOLDER "bin\x64\Release\net461"
-!define AEROCHAT_VERSION "0.2.4"
+# These can be overridden from the command line, e.g.:
+#   makensis /DAEROCHAT_BIN_FOLDER="bin\x64\Release\net461" /DAEROCHAT_DOTNET_INSTALLER="NDP461-KB3102436-x86-x64-AllOS-ENU.exe" Aerochat.nsi
+!ifndef AEROCHAT_BIN_FOLDER
+    !define AEROCHAT_BIN_FOLDER "bin\x64\Release\net48"
+!endif
+!ifndef AEROCHAT_DOTNET_INSTALLER
+    !define AEROCHAT_DOTNET_INSTALLER "ndp48-x86-x64-allos-enu.exe"
+!endif
+!define AEROCHAT_VERSION "0.4.0"
 !define AEROCHAT_RC # Comment this line out if you aren't building RC
-!define AEROCHAT_RC_VERSION "Stability Test Release"
+!define AEROCHAT_RC_VERSION "Aerochat Updated 0.4.0 release"
 
 !ifdef AEROCHAT_RC
     !define AEROCHAT_RC_SUFFIX " ${AEROCHAT_RC_VERSION}"
@@ -611,7 +621,7 @@ Section "Aerochat" Aerochat
     # Install files
     SetOutPath "$InstDir"
     WriteUninstaller "$InstDir\uninstall.exe"
-    ${PLACE_FILE} /r /x *.pdb /x *.xml /x Aerochat.json "..\Aerochat\${AEROCHAT_BIN_FOLDER}\*"
+    ${PLACE_FILE} /r /x *.pdb /x *.xml /x Aerochat.json /x Aerochat.exe.WebView2 "..\Aerochat\${AEROCHAT_BIN_FOLDER}\*"
     
 !ifdef AEROCHAT_RC # We include PDBs for RC builds.
     ${PLACE_FILE} /r "..\Aerochat\${AEROCHAT_BIN_FOLDER}\*.pdb"
@@ -641,10 +651,10 @@ _VcrtAlreadyInstalled:
     # Aerochat requires the .NET runtime, of course.
     DetailPrint "$(STRING_STATUS_DOTNET_ENSURING)"
     SetDetailsPrint listonly # Prefer displaying the user-friendly message since this is a long action.
-    ${PLACE_FILE} ".\NDP461-KB3102436-x86-x64-AllOS-ENU.exe"
-    ExecWait '"$INSTDIR\NDP461-KB3102436-x86-x64-AllOS-ENU.exe" /quiet /norestart'
+    ${PLACE_FILE} ".\${AEROCHAT_DOTNET_INSTALLER}"
+    ExecWait '"$INSTDIR\${AEROCHAT_DOTNET_INSTALLER}" /quiet /norestart'
     SetDetailsPrint both
-    Delete "$INSTDIR\NDP461-KB3102436-x86-x64-AllOS-ENU.exe"
+    Delete "$INSTDIR\${AEROCHAT_DOTNET_INSTALLER}"
     DetailPrint "$(STRING_STATUS_DOTNET_ENSURED)"
 
     # Create shortcut

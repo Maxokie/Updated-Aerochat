@@ -51,8 +51,7 @@ namespace DSharpPlus.Net.Abstractions
             try
             {
                 using var http = new HttpClient();
-                http.DefaultRequestHeaders.Add("User-Agent",
-                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36");
+                http.DefaultRequestHeaders.Add("User-Agent", Utilities.GetUserAgent());
                 http.Timeout = TimeSpan.FromSeconds(15);
 
                 var loginHtml = await http.GetStringAsync("https://discord.com/login").ConfigureAwait(false);
@@ -120,7 +119,7 @@ namespace DSharpPlus.Net.Abstractions
 
         [JsonProperty("browser_version")]
         public string BrowserVersion
-            => $"{70 + ((DateTime.Now.Year - 2020) * 12) + DateTime.Now.Month}.0.0.0";
+            => Utilities.GetChromeVersion();
 
         [JsonProperty("os_version")]
         public string OSVersion

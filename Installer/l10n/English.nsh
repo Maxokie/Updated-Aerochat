@@ -27,5 +27,10 @@ Click Next to continue."
 !insertmacro LANG_STRING STRING_STATUS_MSVCRT_ENSURING "Ensuring that Visual C++ Runtime libraries are installed... This may take a second."
 !insertmacro LANG_STRING STRING_STATUS_MSVCRT_ENSURED "Visual C++ Runtime libraries are installed."
 
-!insertmacro LANG_STRING STRING_STATUS_DOTNET_ENSURING "Ensuring that the .NET Framework 4.6.1 is installed... This may take a second."
-!insertmacro LANG_STRING STRING_STATUS_DOTNET_ENSURED "The .NET Framework 4.6.1 is installed."
+!ifdef AEROCHAT_461_BUILD
+    !insertmacro LANG_STRING STRING_STATUS_DOTNET_ENSURING "Ensuring that the .NET Framework 4.6.1 is installed... This may take a second."
+    !insertmacro LANG_STRING STRING_STATUS_DOTNET_ENSURED "The .NET Framework 4.6.1 is installed."
+!else
+    !insertmacro LANG_STRING STRING_STATUS_DOTNET_ENSURING "Ensuring that the .NET Framework 4.8 is installed... This may take a second."
+    !insertmacro LANG_STRING STRING_STATUS_DOTNET_ENSURED "The .NET Framework 4.8 is installed."
+!endif

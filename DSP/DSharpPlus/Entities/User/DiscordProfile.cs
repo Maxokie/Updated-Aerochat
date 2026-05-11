@@ -40,9 +40,13 @@ namespace DSharpPlus.Entities
         internal DiscordProfile(TransportProfile transport)
         {
             this.User = new DiscordUser(transport.User);
+            this.Bio = transport.UserProfile?.Bio ?? "";
         }
 
         public virtual DiscordUser User { get; internal set; }
+
+        /// <summary>User profile "About me" text from the profile endpoint.</summary>
+        public string Bio { get; internal set; } = "";
 
         /// <summary>
         /// Checks whether this <see cref="DiscordProfile"/> is equal to another object.

@@ -7,6 +7,7 @@ using System.Threading.Tasks;
 using System.Diagnostics;
 using Aerochat.Theme;
 using Aerochat.Hoarder;
+using Aerochat.Helpers;
 
 namespace Aerochat.ViewModels
 {
@@ -20,12 +21,22 @@ namespace Aerochat.ViewModels
         private SceneViewModel? _scene;
         private string? _color = "#525252";
         private string? _image;
+        private string? _bio;
         private bool _isSpeaking;
 
         public bool IsSpeaking
         {
             get => _isSpeaking;
             set => SetProperty(ref _isSpeaking, value);
+        }
+
+        private bool _isBlocked;
+
+        /// <summary>True when this user has a blocked relationship with the current account.</summary>
+        public bool IsBlocked
+        {
+            get => _isBlocked;
+            set => SetProperty(ref _isBlocked, value);
         }
 
         public required string Name
@@ -73,6 +84,13 @@ namespace Aerochat.ViewModels
             set => SetProperty(ref _image, value);
         }
 
+        /// <summary>Discord profile bio ("About me"); filled when the profile API is fetched.</summary>
+        public string? Bio
+        {
+            get => _bio;
+            set => SetProperty(ref _bio, value);
+        }
+
         public static UserViewModel FromUser(DiscordUser user)
         {
             return new UserViewModel
@@ -83,7 +101,8 @@ namespace Aerochat.ViewModels
                 Id = user.Id,
                 Username = user.Username,
                 Presence = user.Presence == null ? null : PresenceViewModel.FromPresence(user.Presence),
-                Scene = SceneViewModel.FromUser(user)
+                Scene = SceneViewModel.FromUser(user),
+                IsBlocked = DiscordRelationshipHelper.IsUserBlocked(Discord.Client, user.Id)
             };
         }
 
@@ -100,7 +119,8 @@ namespace Aerochat.ViewModels
                 Presence = member.Presence == null ? null : PresenceViewModel.FromPresence(member.Presence),
                 // convert member.Color to hex string
                 Color = member.Color.ToString() == "#000000" ? "#525252" : member.Color.ToString(),
-                Image = role?.IconUrl
+                Image = role?.IconUrl,
+                IsBlocked = DiscordRelationshipHelper.IsUserBlocked(Discord.Client, member.Id)
             };
         }
     }

@@ -1,4 +1,5 @@
-﻿using DSharpPlus.Entities;
+﻿using Aerochat.Helpers;
+using DSharpPlus.Entities;
 using DSharpPlus;
 using System.Threading.Channels;
 using Aerochat.Services;
@@ -152,6 +153,7 @@ namespace Aerochat.Services
             }
             catch (Exception ex)
             {
+                DiagnosticsLog.Swallowed("ChatService.SendAsync", ex);
                 return new SendResult(false, null, "Unknown", ex.Message);
             }
         }

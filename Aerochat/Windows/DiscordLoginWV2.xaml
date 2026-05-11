@@ -3,15 +3,17 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
-        xmlns:local="clr-namespace:Aerochat.Windows"
         mc:Ignorable="d"
-        Title=".NET Passport Log-on" Height="200" Width="420"
-        WindowStartupLocation="CenterOwner" ResizeMode="NoResize">
-    <Grid Margin="16">
-        <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center">
-            <TextBlock TextWrapping="Wrap" TextAlignment="Center" FontSize="13"
-                       Text="Browser-based login is not supported on this version of Aerochat.&#x0a;&#x0a;Please use token login instead." />
-            <Button Content="Close" Margin="0,16,0,0" Width="80" Click="OnClose" HorizontalAlignment="Center" />
-        </StackPanel>
+        Title=".NET Passport Log-on" Height="640" Width="960" MinHeight="400" MinWidth="600"
+        WindowStartupLocation="CenterOwner" ResizeMode="CanResize">
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+        <TextBlock Margin="12,10,12,8" TextWrapping="Wrap" Foreground="#333"
+                   Text="Sign in with your Discord account. When you are logged in, Aerochat will detect your session and continue automatically. You can close this window to cancel." />
+        <!-- WebView2 is created in code-behind (avoids XAML/toolbox issues with net461 + WebView2.Wpf). -->
+        <Border x:Name="WebViewHost" Grid.Row="1" />
     </Grid>
 </Window>

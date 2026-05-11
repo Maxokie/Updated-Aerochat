@@ -124,6 +124,7 @@ namespace DSharpPlus.Net
             this.HttpClient.DefaultRequestHeaders.TryAddWithoutValidation("User-Agent", Utilities.GetUserAgent());
             this.HttpClient.DefaultRequestHeaders.TryAddWithoutValidation("X-Super-Properties", Convert.ToBase64String(Encoding.UTF8.GetBytes(JsonConvert.SerializeObject(new ClientProperties()))));
             this.HttpClient.DefaultRequestHeaders.TryAddWithoutValidation("X-Discord-Locale", System.Globalization.CultureInfo.CurrentCulture.Name);
+            this.HttpClient.DefaultRequestHeaders.TryAddWithoutValidation("X-Discord-Timezone", TimeZoneInfo.Local.Id);
 
             this.RoutesToHashes = new ConcurrentDictionary<string, string>();
             this.HashesToBuckets = new ConcurrentDictionary<string, RateLimitBucket>();

@@ -2327,9 +2327,27 @@ namespace DSharpPlus
         private async Task OnRelationshipRemoveAsync(JToken json)
         {
             var rel = json.ToObject<DiscordRelationship>();
+            rel.Discord = this;
 
-            if (_relationships.TryRemove(rel.Id, out rel))
-                await _relationshipRemoved?.InvokeAsync(this, new RelationshipRemoveEventArgs() { Relationship = rel });
+            DiscordRelationship? removed = null;
+            if (_relationships.TryRemove(rel.Id, out removed))
+            {
+                // ok
+            }
+            else if (rel.UserId != 0)
+            {
+                foreach (var kv in _relationships.ToArray())
+                {
+                    if (kv.Value.UserId == rel.UserId)
+                    {
+                        _relationships.TryRemove(kv.Key, out removed);
+                        break;
+                    }
+                }
+            }
+
+            if (removed != null)
+                await _relationshipRemoved?.InvokeAsync(this, new RelationshipRemoveEventArgs() { Relationship = removed });
         }
         #endregion
 

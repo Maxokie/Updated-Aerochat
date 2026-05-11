@@ -88,7 +88,11 @@ namespace DSharpPlus.Net
 
             if (headers != null)
             {
-                headers = headers.Select(x => new KeyValuePair<string, string>(x.Key, Uri.EscapeDataString(x.Value)))
+                // Uri.EscapeDataString breaks base64 padding (=) in X-Context-Properties (see discord.py-self tracking.ContextProperties).
+                headers = headers.Select(x => new KeyValuePair<string, string>(x.Key,
+                        string.Equals(x.Key, "X-Context-Properties", StringComparison.OrdinalIgnoreCase)
+                            ? x.Value
+                            : Uri.EscapeDataString(x.Value)))
                     .ToDictionary(x => x.Key, x => x.Value);
                 this.Headers = headers;
             }

@@ -132,6 +132,23 @@
 
         <helpers:ImageConverter x:Key="imageConverter"/>
         <helpers:StatusStringToUserStatusConverter x:Key="StatusStringToUserStatusConverter"/>
+        <helpers:StringNullOrEmptyToVisibilityConverter x:Key="stringNullOrEmptyToVisibilityConverter"/>
+
+        <DataTemplate x:Key="ServerMemberRowTemplate">
+            <Border Padding="2,2" Background="Transparent" Cursor="Hand" MouseLeftButtonUp="ServerMemberRow_Click">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <controls:ProfilePictureFrame Grid.Column="0" FrameSize="Small" Margin="0,0,6,0"
+                                                  ProfilePicture="{Binding Avatar, Converter={StaticResource imageConverter}}"
+                                                  UserStatus="{Binding Presence.Status, TargetNullValue=Offline}" />
+                    <TextBlock Grid.Column="1" VerticalAlignment="Center" Text="{Binding Name}" Foreground="#333333"
+                               TextTrimming="CharacterEllipsis" />
+                </Grid>
+            </Border>
+        </DataTemplate>
     </Window.Resources>
     <controls:BaseTitlebar Color="{Binding Recipient.Scene.Color}" BlackText="{Binding Recipient.Scene.TextColor}">
         <Grid>
@@ -257,9 +274,30 @@
                     <Rectangle Height="{Binding TopHeight}" VerticalAlignment="Top" Panel.ZIndex="4" Fill="{Binding Recipient.Scene.Color}" />
                     <Grid Panel.ZIndex="10" Margin="0,0,0,0">
                         <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="165" />
+                            <ColumnDefinition Width="165" MinWidth="100" MaxWidth="350" />
+                            <ColumnDefinition Width="5" />
                             <ColumnDefinition Width="*" />
                         </Grid.ColumnDefinitions>
+                        <GridSplitter Grid.Column="1" Width="5" HorizontalAlignment="Stretch" VerticalAlignment="Stretch"
+                                      Cursor="SizeWE" Background="Transparent" Panel.ZIndex="100">
+                            <GridSplitter.Style>
+                                <Style TargetType="GridSplitter">
+                                    <Setter Property="Visibility" Value="Visible" />
+                                    <Style.Triggers>
+                                        <!-- Collapse only for 1:1 DMs (IsDM=true but NOT a group chat).
+                                             Group chats also have IsDM=true since they are DiscordDmChannel,
+                                             so we must check both conditions together. -->
+                                        <MultiDataTrigger>
+                                            <MultiDataTrigger.Conditions>
+                                                <Condition Binding="{Binding IsDM}" Value="True" />
+                                                <Condition Binding="{Binding IsGroupChat}" Value="False" />
+                                            </MultiDataTrigger.Conditions>
+                                            <Setter Property="Visibility" Value="Collapsed" />
+                                        </MultiDataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </GridSplitter.Style>
+                        </GridSplitter>
                         <Grid Grid.Column="0" Panel.ZIndex="50">
                             <Grid.Style>
                                 <Style TargetType="Grid">
@@ -275,10 +313,23 @@
                                 </Style>
                             </Grid.Style>
                             <Grid HorizontalAlignment="Center" VerticalAlignment="Top">
-                                <controls:ProfilePictureFrame FrameSize="ExtraLarge" UserStatus="{Binding Recipient.Presence.Status}" ProfilePicture="{Binding Recipient.Avatar, Converter={StaticResource imageConverter}}" />
+                                <controls:ProfilePictureFrame FrameSize="ExtraLarge" UserStatus="{Binding Recipient.Presence.Status}" ProfilePicture="{Binding Recipient.Avatar, Converter={StaticResource imageConverter}}">
+                                    <controls:ProfilePictureFrame.ContextMenu>
+                                        <ContextMenu Tag="Recipient" Opened="DmProfile_ContextMenuOpened">
+                                            <MenuItem Header="{loc:Loc ChatGroupMemberShowProfile}" Click="DmProfile_ShowProfile_Click" />
+                                            <MenuItem Header="{loc:Loc ChatGroupMemberFriendRequest}" Tag="Friend" Click="DmProfile_FriendRequest_Click" />
+                                        </ContextMenu>
+                                    </controls:ProfilePictureFrame.ContextMenu>
+                                </controls:ProfilePictureFrame>
                             </Grid>
                             <Grid HorizontalAlignment="Center" VerticalAlignment="Bottom">
-                                <controls:ProfilePictureFrame FrameSize="ExtraLarge" UserStatus="{Binding CurrentUser.Presence.Status}" ProfilePicture="{Binding CurrentUser.Avatar}" />
+                                <controls:ProfilePictureFrame FrameSize="ExtraLarge" UserStatus="{Binding CurrentUser.Presence.Status}" ProfilePicture="{Binding CurrentUser.Avatar}">
+                                    <controls:ProfilePictureFrame.ContextMenu>
+                                        <ContextMenu Tag="CurrentUser" Opened="DmProfile_ContextMenuOpened">
+                                            <MenuItem Header="{loc:Loc ChatGroupMemberShowProfile}" Click="DmProfile_ShowProfile_Click" />
+                                        </ContextMenu>
+                                    </controls:ProfilePictureFrame.ContextMenu>
+                                </controls:ProfilePictureFrame>
                             </Grid>
                         </Grid>
                         <Grid Grid.Column="0" Panel.ZIndex="50">
@@ -299,7 +350,9 @@
                                 <RowDefinition Height="{Binding TopHeight}" />
                                 <RowDefinition Height="*" />
                             </Grid.RowDefinitions>
-                            <Grid Margin="0,0,0,0" Grid.Row="0">
+                            <Grid Margin="0,0,0,0" Grid.Row="0" Background="Transparent" Cursor="Hand"
+                                  ToolTip="{loc:Loc ChatServerMemberListToggle}"
+                                  PreviewMouseLeftButtonUp="GuildServerHeaderIcon_Click">
                                 <Image Source="/Aerochat;component/Resources/Message/Group.png" HorizontalAlignment="Center" Margin="0,0,0,3" VerticalAlignment="Bottom" Width="100" Height="75" />
                             </Grid>
                             <Grid Grid.Row="1" Margin="4,4,16,4">
@@ -597,7 +650,16 @@
                                                         <ItemsControl ItemsSource="{Binding Items}" Margin="0,0,6,0">
                                                             <ItemsControl.ItemTemplate>
                                                                 <DataTemplate>
-                                                                    <Button HorizontalContentAlignment="Left" Style="{StaticResource TransparentStyle}">
+                                                                    <Button HorizontalContentAlignment="Left" Style="{StaticResource TransparentStyle}"
+                                                                            PreviewMouseLeftButtonUp="GroupChatMember_PreviewMouseLeftButtonUp">
+                                                                        <Button.ContextMenu>
+                                                                            <ContextMenu Opened="GroupChatMember_ContextMenuOpened">
+                                                                                <MenuItem Header="{loc:Loc ChatGroupMemberShowProfile}" Click="GroupChatMember_ShowProfile_Click" />
+                                                                                <MenuItem Header="{loc:Loc ChatGroupMemberSendMessage}" Tag="Message" Click="GroupChatMember_SendMessage_Click" />
+                                                                                <MenuItem Header="{loc:Loc ChatGroupMemberFriendRequest}" Tag="Friend" Click="GroupChatMember_FriendRequest_Click" />
+                                                                                <MenuItem Header="{loc:Loc ChatGroupMemberBlock}" Tag="Block" Click="GroupChatMember_Block_Click" />
+                                                                            </ContextMenu>
+                                                                        </Button.ContextMenu>
                                                                         <Grid Height="45">
                                                                             <controls:NineSlice Slice="4,4">
                                                                                 <controls:NineSlice.Style>
@@ -638,7 +700,61 @@
                                 </ScrollViewer>
                             </Grid>
                         </Grid>
-                        <Grid Grid.Column="1">
+                        <DockPanel Grid.Column="2" LastChildFill="True" Background="Transparent">
+                            <Grid x:Name="ServerMemberListRoot" DockPanel.Dock="Right" Width="0" MinWidth="0" MaxWidth="220"
+                                  Panel.ZIndex="8" Background="Transparent" ClipToBounds="True">
+                                <Grid.Style>
+                                    <Style TargetType="Grid">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                        <Style.Triggers>
+                                            <MultiDataTrigger>
+                                                <MultiDataTrigger.Conditions>
+                                                    <Condition Binding="{Binding IsDM}" Value="False" />
+                                                    <Condition Binding="{Binding IsGroupChat}" Value="False" />
+                                                    <Condition Binding="{Binding IsServerMemberPanelOpen}" Value="True" />
+                                                </MultiDataTrigger.Conditions>
+                                                <Setter Property="Visibility" Value="Visible" />
+                                            </MultiDataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </Grid.Style>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="*" />
+                                </Grid.RowDefinitions>
+                                <!-- No separate background: stay transparent so the same full-window Message/Background.png layer shows through as in the chat column (a second ColorizedNineSlice retiles from the strip edge and never matches). -->
+                                <TextBlock Grid.Row="0" Margin="8,8,8,0" Foreground="#355a88" FontSize="15"
+                                           HorizontalAlignment="Stretch" TextAlignment="Left"
+                                           Text="{loc:Loc ChatServerMemberListTitle}" />
+                                <Grid Grid.Row="1" VerticalAlignment="Bottom">
+                                    <controls:ColorizedNineSlice Height="12" Slice="1,1" TintColor="{Binding Recipient.Scene.Color}" Image="/Aerochat;component/Resources/Message/Separator.png">
+                                        <controls:ColorizedNineSlice.Style>
+                                            <Style TargetType="controls:ColorizedNineSlice">
+                                                <Setter Property="Margin" Value="0,0,0,0" />
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding Recipient.Scene.Default}" Value="False">
+                                                        <Setter Property="Margin" Value="0,0,0,-12" />
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </controls:ColorizedNineSlice.Style>
+                                    </controls:ColorizedNineSlice>
+                                </Grid>
+                                <ScrollViewer Grid.Row="2" VerticalScrollBarVisibility="Auto" Padding="4,4,4,8" Background="Transparent">
+                                    <StackPanel>
+                                        <TextBlock Foreground="#355a88" FontSize="15" Margin="4,0,4,2"
+                                                   Text="{Binding ServerMemberOnlineSectionLabel}" />
+                                        <ItemsControl ItemTemplate="{StaticResource ServerMemberRowTemplate}"
+                                                      ItemsSource="{Binding ServerMemberListOnline}" />
+                                        <TextBlock Foreground="#355a88" FontSize="15" Margin="4,10,4,2"
+                                                   Text="{Binding ServerMemberOfflineSectionLabel}" />
+                                        <ItemsControl ItemTemplate="{StaticResource ServerMemberRowTemplate}"
+                                                      ItemsSource="{Binding ServerMemberListOffline}" />
+                                    </StackPanel>
+                                </ScrollViewer>
+                            </Grid>
+                            <Grid>
                             <Grid.RowDefinitions>
                                 <RowDefinition Height="{Binding TopHeight}" />
                                 <RowDefinition Height="8" />
@@ -1830,6 +1946,7 @@
                                 </Grid>
                             </Grid>
                         </Grid>
+                        </DockPanel>
                     </Grid>
                 </Grid>
                 <Grid Grid.Row="3" UseLayoutRounding="True">
@@ -1944,6 +2061,14 @@
                             </MultiBinding>
                         </TextBox.Text>
                     </TextBox>
+                    <Separator Margin="0,8,0,8"
+                        Visibility="{Binding Author.Bio, Converter={StaticResource stringNullOrEmptyToVisibilityConverter}}"
+                        Background="#40000000" />
+                    <TextBox FontSize="12" Foreground="{Binding Scene.TextColor}" Opacity="0.9" Margin="0,0,0,0"
+                        IsReadOnly="True" Background="Transparent" BorderThickness="0" Padding="0" Cursor="IBeam"
+                        TextWrapping="Wrap" MaxWidth="220"
+                        Visibility="{Binding Author.Bio, Converter={StaticResource stringNullOrEmptyToVisibilityConverter}}"
+                        Text="{Binding Author.Bio, Mode=OneWay}" />
                     </StackPanel>
                 </Border>
             </Border>

@@ -2,33 +2,38 @@
 
 	<PropertyGroup>
 		<OutputType>WinExe</OutputType>
-		<TargetFramework>net461</TargetFramework>
+		<!-- net48: WebView2 (password login) requires facades compatible with Microsoft.Web.WebView2.Wpf. -->
+		<!-- net461: Vista-compatible build, no WebView2 (password login unavailable). -->
+		<TargetFrameworks>net461;net48</TargetFrameworks>
 		<LangVersion>latest</LangVersion>
 		<Nullable>enable</Nullable>
 		<ImplicitUsings>enable</ImplicitUsings>
 		<UseWPF>true</UseWPF>
 		<DefineConstants>$(DefineConstants);FEATURE_SELECTABLE_MESSAGE_TEXT</DefineConstants>
 		<Platforms>AnyCPU;x64</Platforms>
+		<!-- Allows restore/build when a RID is applied (e.g. win-x64 / x64 solution platform). -->
+		<RuntimeIdentifiers>win-x86;win-x64</RuntimeIdentifiers>
 		<NuGetAudit>false</NuGetAudit>
 		<SuppressTfmSupportBuildWarnings>true</SuppressTfmSupportBuildWarnings>
 		<ApplicationIcon>Icons\MainWnd.ico</ApplicationIcon>
 		<GenerateAssemblyInfo>false</GenerateAssemblyInfo>
 	</PropertyGroup>
 
+	<!-- PreferNativeArm64 is only valid when the project platform is AnyCPU (not x64). -->
 	<PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|AnyCPU'">
-	  <PreferNativeArm64>True</PreferNativeArm64>
+	  <PreferNativeArm64>true</PreferNativeArm64>
 	</PropertyGroup>
 
 	<PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
-	  <PreferNativeArm64>True</PreferNativeArm64>
+	  <PreferNativeArm64>false</PreferNativeArm64>
 	</PropertyGroup>
 
 	<PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|AnyCPU'">
-	  <PreferNativeArm64>True</PreferNativeArm64>
+	  <PreferNativeArm64>true</PreferNativeArm64>
 	</PropertyGroup>
 
 	<PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
-	  <PreferNativeArm64>True</PreferNativeArm64>
+	  <PreferNativeArm64>false</PreferNativeArm64>
 	</PropertyGroup>
 
 	<ItemGroup>
@@ -692,6 +697,7 @@
 		<PackageReference Include="Lib.Harmony" Version="2.3.6" />
 		<PackageReference Include="Markdig" Version="0.37.0" />
 		<PackageReference Include="MdXaml" Version="1.27.0" />
+		<PackageReference Include="Microsoft.Web.WebView2" Version="1.0.2903.40" Condition="'$(TargetFramework)' == 'net48'" GeneratePathProperty="true" />
 		<PackageReference Include="MimeTypeMapOfficial" Version="1.0.17" />
 		<PackageReference Include="Vanara.PInvoke.DwmApi" Version="4.0.3" />
 		<PackageReference Include="Vanara.PInvoke.Shared" Version="4.0.3" />
@@ -699,6 +705,24 @@
 		<PackageReference Include="Vanara.PInvoke.User32" Version="4.0.3" />
 		<PackageReference Include="Websocket.Client" Version="4.6.1" />
 		<PackageReference Include="XamlAnimatedGif" Version="2.3.0" />
+	</ItemGroup>
+
+	<!-- WebView2: SDK net461 does not pick WPF/Core from lib_manual; reference explicitly for password login. -->
+	<ItemGroup Condition="'$(TargetFramework)' == 'net48'">
+		<Reference Include="Microsoft.Web.WebView2.Core">
+			<HintPath>$(PkgMicrosoft_Web_WebView2)\lib_manual\netcoreapp3.0\Microsoft.Web.WebView2.Core.dll</HintPath>
+			<Private>true</Private>
+		</Reference>
+		<Reference Include="Microsoft.Web.WebView2.Wpf">
+			<HintPath>$(PkgMicrosoft_Web_WebView2)\lib_manual\netcoreapp3.0\Microsoft.Web.WebView2.Wpf.dll</HintPath>
+			<Private>true</Private>
+		</Reference>
+	</ItemGroup>
+
+	<!-- Exclude WebView2 login window from net461 build entirely so the XAML compiler doesn't try to resolve WebView2 types. -->
+	<ItemGroup Condition="'$(TargetFramework)' == 'net461'">
+		<Compile Remove="Windows\DiscordLoginWV2.xaml.cs" />
+		<Page Remove="Windows\DiscordLoginWV2.xaml" />
 	</ItemGroup>
 
 	<ItemGroup>

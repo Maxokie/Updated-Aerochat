@@ -1,24 +1,28 @@
 using Aerochat.Helpers;
 using Aerochat.Hoarder;
 using Aerochat.Localization;
+using System.ComponentModel;
+using System.Collections.Concurrent;
+using System.Collections.Generic;
+using System.Linq;
 using Aerochat.Services;
 using Aerochat.Settings;
 using Aerochat.Theme;
 using Aerochat.ViewModels;
 using Aerochat.Voice;
-using Aerovoice.Clients;
 using DSharpPlus;
 using DSharpPlus.Entities;
 using DSharpPlus.Exceptions;
 using Google.Protobuf.WellKnownTypes;
 using Microsoft.Win32;
 using System.Collections.ObjectModel;
-using System.ComponentModel;
+using DSharpPlus.EventArgs;
 using System.Diagnostics;
 using System.Drawing;
 using System.IO;
 using System.Reflection;
 using System.Text;
+using System.Threading.Tasks;
 using System.Timers;
 using System.Windows;
 using System.Windows.Controls;
@@ -43,19 +47,58 @@ using Timer = System.Timers.Timer;
 
 namespace Aerochat.Windows
 {
-    public class ToolbarItem(string text, ToolbarItemAction action, bool isEyecandy = false, string hint = "")
+    public class ToolbarItem : INotifyPropertyChanged
     {
-        public string Text { get; set; } = text;
-        public string ToolTip { get; set; } = hint;
-        public bool IsEyecandy { get; } = isEyecandy;
+        private string _text;
+        private string _toolTip;
+
+        public string Text
+        {
+            get => _text;
+            set
+            {
+                if (_text == value) return;
+                _text = value;
+                OnPropertyChanged(nameof(Text));
+            }
+        }
+
+        public string ToolTip
+        {
+            get => _toolTip;
+            set
+            {
+                if (_toolTip == value) return;
+                _toolTip = value;
+                OnPropertyChanged(nameof(ToolTip));
+            }
+        }
+
+        public bool IsEyecandy { get; }
 
         public delegate void ToolbarItemAction(FrameworkElement itemElement);
 
-        public ToolbarItemAction Action { get; set; } = action;
+        public ToolbarItemAction Action { get; set; }
+
+        public ToolbarItem(string text, ToolbarItemAction action, bool isEyecandy = false, string hint = "")
+        {
+            _text = text;
+            _toolTip = hint;
+            IsEyecandy = isEyecandy;
+            Action = action;
+        }
+
+        public event PropertyChangedEventHandler? PropertyChanged;
+
+        void OnPropertyChanged(string name) =>
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));
     }
 
     public partial class Chat : Window
     {
+        private ToolbarItem? _blockToolbarItem;
+        /// <summary>Group DM: last member row clicked (for Block/Unblock toolbar label).</summary>
+        private ulong? _focusedGroupMemberId;
         private MediaPlayer chatSoundPlayer = new();
         public DiscordChannel Channel;
         public ulong ChannelId;
@@ -67,9 +110,17 @@ namespace Aerochat.Windows
         private PresenceViewModel? _initialPresence = null;
         private HomeListItemViewModel? _openingItem = null;
         private readonly ChatService _chatService;
-        private DispatcherTimer? _callDurationTimer;
-        private DateTime _dmCallConnectedAt;
+        /// <summary>Guilds for which we have completed a full OP 8 member-chunk request this session.
+        /// DSharpPlus overwrites guild.MemberCount with the cache size on every chunk event, making
+        /// the "cache vs MemberCount" check unreliable after a timeout — so we track completeness here.</summary>
+        private readonly ConcurrentDictionary<ulong, bool> _guildMemberCacheComplete = new();
 
+        private const string AEROCHAT_HELP_WIKI_URL = "https://github.com/Maxokie/Updated-Aerochat/wiki/Frequently%E2%80%90asked-questions";
+
+        private NonNativeTooltip? _profilePictureMenu;
+        /// <summary>After choosing a flyout command, the same click's MouseUp hits the avatar under the closed window and would reopen the menu; ignore briefly.</summary>
+        private DateTime _suppressProfilePictureMenuUntilUtc = DateTime.MinValue;
+        private ulong _profilePopupForUserId;
         public ObservableCollection<DiscordUser> TypingUsers { get; } = new();
         public ChatWindowViewModel ViewModel { get; set; } = new ChatWindowViewModel();
         public Chat(ulong id, bool allowDefault = false, PresenceViewModel? initialPresence = null, HomeListItemViewModel? openingItem = null, DiscordClient discordClient = null)
@@ -81,6 +132,13 @@ namespace Aerochat.Windows
             _chatService = new ChatService(Discord.Client, new DSharpPlusDiscordApi(Discord.Client));
             InitializeComponent();
             DataContext = ViewModel;
+            _blockToolbarItem = ViewModel.ToolbarItems[5];
+            if (Discord.Client is not null)
+            {
+                Discord.Client.RelationshipAdded += Chat_RelationshipAdded;
+                Discord.Client.RelationshipRemoved += Chat_RelationshipRemoved;
+                Discord.Client.DmChannelDeleted += Chat_DmChannelDeleted;
+            }
             Hide();
 
             if (allowDefault)
@@ -132,6 +190,7 @@ namespace Aerochat.Windows
 
             // (iL - 20.12.2024) Subscribe to settings changes for live update
             SettingsManager.Instance.PropertyChanged += OnSettingsChanged;
+            LocalizationManager.Instance.PropertyChanged += LocalizationManager_PropertyChanged;
 
             Closing += Chat_Closing;
             Loaded += Chat_Loaded;
@@ -144,8 +203,6 @@ namespace Aerochat.Windows
             _chatService.ChannelUpdated += OnChannelUpdated;
             _chatService.PresenceUpdated += OnPresenceUpdated;
             _chatService.VoiceStateUpdated += OnVoiceStateUpdated;
-            VoiceManager.Instance.UserSpeakingChanged += OnUserSpeakingChanged;
-            VoiceManager.Instance.ClientSpeakingChanged += OnClientSpeakingChanged;
             ViewModel.UndoEnabled = false;
             ViewModel.RedoEnabled = false;
 
@@ -154,6 +211,8 @@ namespace Aerochat.Windows
 
             PreviewKeyDown += Chat_PreviewKeyDown;
             KeyDown += Chat_KeyDown;
+            PreviewMouseDown += Chat_PreviewMouseDown_DismissProfileMenu;
+            Deactivated += (_, _) => _profilePictureMenu?.Close();
 
             PART_AttachmentsEditor.ViewModel.Attachments.CollectionChanged
                 += OnAttachmentsEditorAttachmentsUpdated;
@@ -243,8 +302,10 @@ namespace Aerochat.Windows
                 CloseAttachmentsEditor();
             });
 
-            if (ViewModel.Messages.Count > 0) ViewModel.Messages.Clear();
+            ReplaceViewModelMessages(new ObservableCollection<MessageViewModel>());
             ViewModel.Loading = true;
+            ViewModel.BlockedUserWarningDismissed = false;
+            _focusedGroupMemberId = null;
 
             var newChannel = await _chatService.GetChannelAsync(ChannelId);
 
@@ -277,7 +338,8 @@ namespace Aerochat.Windows
             DiscordUser? recipient = null;
             if (isDM && !isGroupChat)
             {
-                recipient = ((DiscordDmChannel)newChannel).Recipients.FirstOrDefault(x => x.Id != currentUser.Id);
+                var dmForRecipient = (DiscordDmChannel)newChannel;
+                recipient = (dmForRecipient.Recipients ?? Array.Empty<DiscordUser>()).FirstOrDefault(x => x.Id != currentUser.Id);
                 if (recipient is not null)
                 {
                     ulong recipientId = recipient.Id;
@@ -342,11 +404,8 @@ namespace Aerochat.Windows
 
             await Dispatcher.BeginInvoke(() =>
             {
-                foreach (var msg in messageViewModels)
-                {
-                    if (ViewModel is null || ViewModel?.Messages is null) return;
-                    ViewModel.Messages.Add(msg);
-                }
+                if (ViewModel is null) return;
+                ReplaceViewModelMessages(new ObservableCollection<MessageViewModel>(messageViewModels));
             });
 
 
@@ -358,23 +417,31 @@ namespace Aerochat.Windows
                     Show();
                 }
                 MessageTextBox.Focus();
+                UpdateHasBlockedUserInConversation();
+                RefreshBlockToolbarAppearance();
+                if (ViewModel.IsDM || ViewModel.IsGroupChat)
+                    CloseServerMemberPanel();
             });
 
-            ViewModel.Loading = false;
-
-            RunGCRelease();
-            ProcessLastRead();
-
-            if (!isDM)
-            {
-                if (SettingsManager.Instance.LastReadMessages.ContainsKey(ChannelId) && Channel.LastMessageId is not null)
-                {
-                    SettingsManager.Instance.LastReadMessages[ChannelId] = (ulong)Channel.LastMessageId;
-                }
-                SettingsManager.Save();
-            }
-
             await Dispatcher.BeginInvoke(() =>
+            {
+                ViewModel.Loading = false;
+
+                ProcessLastRead();
+
+                if (!isDM)
+                {
+                    if (SettingsManager.Instance.LastReadMessages.ContainsKey(ChannelId) && Channel.LastMessageId is not null)
+                    {
+                        SettingsManager.Instance.LastReadMessages[ChannelId] = (ulong)Channel.LastMessageId;
+                    }
+                    SettingsManager.Save();
+                }
+            });
+
+            // Defer so BeginDiscordLoop can Show+Activate this window first (Normal priority). Otherwise Home
+            // repaints/scrolls before the chat is visible and the chat can end up behind the main window.
+            _ = Dispatcher.BeginInvoke(new Action(() =>
             {
                 foreach (var window in Application.Current.Windows)
                 {
@@ -384,9 +451,9 @@ namespace Aerochat.Windows
                         break;
                     }
                 }
-            });
+            }), DispatcherPriority.Background);
 
-            await Dispatcher.BeginInvoke(UpdateChannelListerReadReciepts);
+            _ = Dispatcher.BeginInvoke(UpdateChannelListerReadReciepts, DispatcherPriority.Background);
         }
 
         public void UpdateChannelListerReadReciepts()
@@ -397,6 +464,8 @@ namespace Aerochat.Windows
                 bool isDM = Channel is DiscordDmChannel;
                 if (isDM) return;
 
+                var updates = new List<(HomeListItemViewModel item, string image, ulong? lastReadUpdate)>();
+
                 foreach (var category in categories)
                 {
                     foreach (var item in category.Items)
@@ -405,29 +474,21 @@ namespace Aerochat.Windows
                         if (discordChannel == null) continue;
 
                         bool found = SettingsManager.Instance.LastReadMessages.TryGetValue(discordChannel.Id, out var lastReadMessageId);
-                        DateTime lastReadMessageTime;
-
-                        if (found)
-                        {
-                            lastReadMessageTime = DateTimeOffset.FromUnixTimeMilliseconds(((long)(lastReadMessageId >> 22) + 1420070400000)).DateTime;
-                        }
-                        else
-                        {
-                            lastReadMessageTime = SettingsManager.Instance.ReadRecieptReference;
-                        }
+                        DateTime lastReadMessageTime = found
+                            ? DateTimeOffset.FromUnixTimeMilliseconds(((long)(lastReadMessageId >> 22) + 1420070400000)).DateTime
+                            : SettingsManager.Instance.ReadRecieptReference;
 
                         bool isCurrentChannel = discordChannel.Id == ChannelId;
-                        var channel = discordChannel;
-                        var lastMessageId = channel.LastMessageId;
+                        var lastMessageId = discordChannel.LastMessageId;
 
-                        if (channel.Type == ChannelType.Voice)
+                        if (discordChannel.Type == ChannelType.Voice)
                         {
-                            item.Image = "unread";
+                            updates.Add((item, "unread", null));
                             continue;
                         }
                         if (lastMessageId is null)
                         {
-                            item.Image = "read";
+                            updates.Add((item, "read", null));
                             continue;
                         }
 
@@ -435,28 +496,28 @@ namespace Aerochat.Windows
 
                         if (lastMessageTime > lastReadMessageTime && !isCurrentChannel)
                         {
-                            item.Image = "unread";
+                            updates.Add((item, "unread", null));
                         }
                         else
                         {
-                            item.Image = "read";
-                            if (isCurrentChannel)
-                            {
-                                // update the last read message
-                                SettingsManager.Instance.LastReadMessages[ChannelId] = lastMessageId ?? 0;
-                            }
+                            updates.Add((item, "read", isCurrentChannel ? lastMessageId : null));
                         }
                     }
                 }
 
                 Application.Current.Dispatcher.BeginInvoke(() =>
                 {
+                    foreach (var (item, image, lastReadUpdate) in updates)
+                    {
+                        item.Image = image;
+                        if (lastReadUpdate.HasValue)
+                            SettingsManager.Instance.LastReadMessages[ChannelId] = lastReadUpdate.Value;
+                    }
+
                     var items = ViewModel.Categories.ToList();
                     ViewModel.Categories.Clear();
-                    foreach (var item in items)
-                    {
-                        ViewModel.Categories.Add(item);
-                    }
+                    foreach (var i in items)
+                        ViewModel.Categories.Add(i);
                 });
             });
         }
@@ -473,12 +534,16 @@ namespace Aerochat.Windows
                 Name = ""
             });
             var currentUser = await _chatService.GetCurrentUser();
+            var client = Discord.Client;
             ViewModel.Categories[0].Items.Add(new()
             {
                 Name = currentUser.DisplayName,
                 Id = currentUser.Id,
                 Image = currentUser.AvatarUrl,
-                Presence = currentUser.Presence == null ? null : PresenceViewModel.FromPresence(currentUser.Presence)
+                DiscordUsername = currentUser.Username,
+                DiscordDiscriminator = currentUser.Discriminator == "0" ? null : currentUser.Discriminator,
+                Presence = currentUser.Presence == null ? null : PresenceViewModel.FromPresence(currentUser.Presence),
+                IsBlocked = false
             });
 
             foreach (var rec in ((DiscordDmChannel)Channel).Recipients)
@@ -488,7 +553,10 @@ namespace Aerochat.Windows
                     Name = rec.DisplayName,
                     Id = rec.Id,
                     Image = rec.AvatarUrl,
-                    Presence = rec.Presence == null ? null : PresenceViewModel.FromPresence(rec.Presence)
+                    DiscordUsername = rec.Username,
+                    DiscordDiscriminator = rec.Discriminator == "0" ? null : rec.Discriminator,
+                    Presence = rec.Presence == null ? null : PresenceViewModel.FromPresence(rec.Presence),
+                    IsBlocked = client is not null && DiscordRelationshipHelper.IsUserBlocked(client, rec.Id)
                 });
             }
         }
@@ -515,7 +583,13 @@ namespace Aerochat.Windows
                         RefreshChannelList();
                     }
                 });
-                await Dispatcher.BeginInvoke(Show);
+                await Dispatcher.BeginInvoke(() =>
+                {
+                    if (Application.Current.Windows.OfType<Home>().FirstOrDefault() is { } home)
+                        Owner = home;
+                    Show();
+                    Activate();
+                });
                 if (!isDM) await _chatService.SyncGuildsAsync(guild).ConfigureAwait(false);
 
                 if (isDM)
@@ -670,43 +744,201 @@ namespace Aerochat.Windows
             }
 
             Dispatcher.BeginInvoke(UpdateChannelListerReadReciepts);
+
+            if (ViewModel.IsServerMemberPanelOpen)
+                RefreshServerMemberList();
         }
 
-        protected override void OnClosing(CancelEventArgs e)
+        private const double ServerMemberPanelWidthPx = 220;
+
+        private void GuildServerHeaderIcon_Click(object sender, MouseButtonEventArgs e)
         {
+            if (e.ChangedButton != MouseButton.Left) return;
+            if (ViewModel.IsDM || ViewModel.IsGroupChat) return;
+            e.Handled = true;
+            ToggleServerMemberPanel();
+        }
+
+        private void ToggleServerMemberPanel()
+        {
+            if (ViewModel.IsServerMemberPanelOpen)
+                CloseServerMemberPanel();
+            else
+                OpenServerMemberPanel();
+        }
+
+        private void OpenServerMemberPanel()
+        {
+            RefreshServerMemberList();
+
+            // Grow the window first, then set the docked strip width. Member UI is a DockPanel.Right child
+            // (see ServerMemberListRoot in Chat.xaml), not Grid columns — avoids measure bugs (0-width strip / full bleed).
+            double w = ActualWidth > 0 ? ActualWidth : Width;
+            if (!double.IsNaN(w) && w > 0)
+                Width = w + ServerMemberPanelWidthPx;
+
+            UpdateLayout();
+            if (ServerMemberListRoot != null)
+                ServerMemberListRoot.Width = ServerMemberPanelWidthPx;
+
+            ViewModel.IsServerMemberPanelOpen = true;
+
+            // Member sync uses ConfigureAwait(false); never await it before UI updates — cross-thread ObservableCollection updates throw.
+            if (Channel?.Guild is DiscordGuild g && Discord.Client is not null)
+                _ = FinishServerMemberListLoadAsync(g);
+        }
+
+        private async Task FinishServerMemberListLoadAsync(DiscordGuild guild)
+        {
+            IReadOnlyCollection<DiscordMember>? restMembers = null;
             try
             {
-                if (Channel?.Guild?.Channels?.Select(x => x.Key).ToList().Contains(VoiceManager.Instance.Channel?.Id ?? 0) ?? false)
+                // Populate gateway cache + presences when possible.
+                await EnsureGuildMemberCacheForMemberPanelAsync(guild).ConfigureAwait(false);
+                // Try REST as a supplemental source in case it returns more complete data than
+                // the gateway cache (e.g. if chunking timed out).  For user accounts the REST
+                // endpoint may succeed and return all members, or it may fail/return partial data.
+                try
                 {
-                    Task.Run(VoiceManager.Instance.LeaveVoiceChannel);
+                    restMembers = await guild.GetAllMembersAsync().ConfigureAwait(false);
+                }
+                catch (Exception ex)
+                {
+                    DiagnosticsLog.Swallowed("Chat.FinishServerMemberListLoadAsync GetAllMembersAsync", ex);
                 }
             }
-            catch (Exception) { }
-            base.OnClosing(e);
-            VoiceManager.Instance.UserSpeakingChanged -= OnUserSpeakingChanged;
-            VoiceManager.Instance.ClientSpeakingChanged -= OnClientSpeakingChanged;
-            _chatService.TypingStarted -= OnType;
-            _chatService.MessageCreated -= OnMessageCreation;
-            // dispose of the chat
-            ViewModel.Messages.Clear();
-            TypingUsers.Clear();
-            foreach (var t in timers)
+            catch (Exception ex)
             {
-                t.Value.Stop();
-                t.Value.Dispose();
+                DiagnosticsLog.Swallowed("Chat.FinishServerMemberListLoadAsync", ex);
             }
-            timers.Clear();
-            chatSoundPlayer.Stop();
-            chatSoundPlayer.Close();
-            System.Timers.Timer timer = new(2000);
-            timer.Elapsed += GCRelease;
-            timer.Start();
+
+            var snapshot = restMembers;
+            int gatewayCacheCount = guild.Members.Count;
+            await Dispatcher.InvokeAsync(() =>
+            {
+                // Only use REST members if they return more members than the gateway cache.
+                // For user accounts, the REST endpoint may return a partial list (e.g. only
+                // visible/online members), which would be fewer than the complete roster already
+                // populated by EnsureGuildMemberCacheForMemberPanelAsync via OP 8 chunking.
+                if (snapshot is { Count: > 0 } && snapshot.Count > gatewayCacheCount)
+                    RefreshServerMemberList(snapshot);
+                else
+                    RefreshServerMemberList();
+            });
+        }
+
+        /// <summary>
+        /// Large guilds only receive a subset of members until a gateway member request completes; request all members (with presences) before filling the sidebar.
+        /// </summary>
+        private async Task EnsureGuildMemberCacheForMemberPanelAsync(DiscordGuild guild)
+        {
+            if (Discord.Client is null) return;
+            // Use _guildMemberCacheComplete instead of guild.MemberCount: DSharpPlus overwrites
+            // MemberCount with the cache size on every chunk event, so after a timeout the value
+            // equals the partial cache size and the check below would incorrectly return early on
+            // all subsequent panel opens, permanently showing an incomplete member list.
+            if (_guildMemberCacheComplete.ContainsKey(guild.Id))
+                return;
+
+            string nonce = Guid.NewGuid().ToString("N");
+            var tcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            Task Handler(DiscordClient client, GuildMembersChunkEventArgs e)
+            {
+                if (e.Guild?.Id != guild.Id) return Task.CompletedTask;
+                if (!string.IsNullOrEmpty(e.Nonce) && e.Nonce != nonce) return Task.CompletedTask;
+                // Refresh the member list after each chunk so members appear progressively
+                // rather than all at once after the full 45-second wait.
+                if (ViewModel?.IsServerMemberPanelOpen == true)
+                    _ = Dispatcher.InvokeAsync(() => RefreshServerMemberList());
+                if (e.ChunkCount <= 0 || e.ChunkIndex != e.ChunkCount - 1) return Task.CompletedTask;
+                tcs.TrySetResult(true);
+                return Task.CompletedTask;
+            }
+
+            Discord.Client.GuildMembersChunked += Handler;
+            try
+            {
+                await guild.RequestMembersAsync("", 0, true, null, nonce).ConfigureAwait(false);
+                await Task.WhenAny(tcs.Task, Task.Delay(TimeSpan.FromSeconds(45))).ConfigureAwait(false);
+                // Only mark complete if all chunks arrived; a timeout means the cache may be
+                // partial, so we retry the next time the panel is opened.
+                if (tcs.Task.IsCompleted)
+                    _guildMemberCacheComplete[guild.Id] = true;
+            }
+            catch (Exception ex)
+            {
+                DiagnosticsLog.Swallowed("Chat.EnsureGuildMemberCacheForMemberPanelAsync", ex);
+            }
+            finally
+            {
+                Discord.Client.GuildMembersChunked -= Handler;
+            }
+        }
+
+        private void CloseServerMemberPanel()
+        {
+            if (!ViewModel.IsServerMemberPanelOpen) return;
+            ViewModel.IsServerMemberPanelOpen = false;
+            if (ServerMemberListRoot != null)
+                ServerMemberListRoot.Width = 0;
+            double w = ActualWidth > 0 ? ActualWidth : Width;
+            if (!double.IsNaN(w))
+                Width = Math.Max(MinWidth, w - ServerMemberPanelWidthPx);
+        }
+
+        private static bool IsGuildMemberPresenceOnline(PresenceViewModel? p)
+        {
+            if (p is null) return false;
+            return p.Status is "Online" or "Idle" or "DoNotDisturb";
+        }
+
+        private void UpdateServerMemberSectionLabels()
+        {
+            if (ViewModel is null) return;
+            var loc = LocalizationManager.Instance;
+            ViewModel.ServerMemberOnlineSectionLabel = string.Format(loc["ChatServerMemberListOnline"], ViewModel.ServerMemberListOnline.Count);
+            ViewModel.ServerMemberOfflineSectionLabel = string.Format(loc["ChatServerMemberListOffline"], ViewModel.ServerMemberListOffline.Count);
+        }
+
+        private void RefreshServerMemberList(IEnumerable<DiscordMember>? membersOverride = null)
+        {
+            ViewModel.ServerMemberListOnline.Clear();
+            ViewModel.ServerMemberListOffline.Clear();
+            var guild = Channel?.Guild;
+            if (guild is null)
+            {
+                UpdateServerMemberSectionLabels();
+                return;
+            }
+
+            IEnumerable<DiscordMember> source = membersOverride ?? guild.Members.Values;
+            foreach (var m in source.OrderBy(x => x.DisplayName, StringComparer.OrdinalIgnoreCase))
+            {
+                var vm = UserViewModel.FromMember(m);
+                if (vm.Presence is null)
+                    vm.Presence = new PresenceViewModel { Presence = "", Status = "Offline", Type = "" };
+                vm.Scene = ThemeService.Instance.Scene;
+
+                if (IsGuildMemberPresenceOnline(vm.Presence))
+                    ViewModel.ServerMemberListOnline.Add(vm);
+                else
+                    ViewModel.ServerMemberListOffline.Add(vm);
+            }
+
+            UpdateServerMemberSectionLabels();
+        }
+
+        private void ServerMemberRow_Click(object sender, MouseButtonEventArgs e)
+        {
+            if (sender is not FrameworkElement fe || fe.DataContext is not UserViewModel user) return;
+            e.Handled = true;
+            OpenUserProfilePopup(user, fe);
         }
 
         private async Task OnMessageCreation(DSharpPlus.DiscordClient sender, DSharpPlus.EventArgs.MessageCreateEventArgs args)
         {
             if (args.Channel.Id != ChannelId) return;
-            args.Channel.GetType().GetProperty("LastMessageId")?.SetValue(args.Channel, args.Message.Id);
+            DiscordChannelLastMessageId.TrySet(args.Channel, args.Message.Id);
             //Dispatcher.BeginInvoke(UpdateChannelListerReadReciepts);
             bool isNudge = args.Message.Content == "[nudge]";
             DiscordUser user = args.Author;
@@ -716,22 +948,14 @@ namespace Aerochat.Windows
 
             MessageViewModel message = MessageViewModel.FromMessage(args.Message, member);
 
-            MessageViewModel? eph = ViewModel.Messages.FirstOrDefault(x => x.Ephemeral && x.Message == message.Message);
-
-            int messageIndex = -1;
-
-            if (eph != null)
-            {
-                messageIndex = ViewModel.Messages.IndexOf(eph);
-            }
-
             await Dispatcher.BeginInvoke(() =>
             {
-                if (messageIndex > -1)
+                MessageViewModel? eph = ViewModel.Messages.FirstOrDefault(x => x.Ephemeral && x.Message == message.Message);
+                if (eph != null)
                 {
                     try
                     {
-                        ViewModel.Messages.RemoveAt(messageIndex);
+                        ViewModel.Messages.RemoveAt(ViewModel.Messages.IndexOf(eph));
                     }
                     catch (ArgumentOutOfRangeException)
                     {
@@ -749,14 +973,12 @@ namespace Aerochat.Windows
                 }
             });
 
-            if (TypingUsers.Contains(args.Author))
-            {
-                TypingUsers.Remove(args.Author);
-            }
-
             DiscordUser? currentUserForSounds = Discord.Client.CurrentUser;
             await Dispatcher.BeginInvoke(() =>
             {
+                if (TypingUsers.Contains(args.Author))
+                    TypingUsers.Remove(args.Author);
+
                 if (currentUserForSounds?.Presence?.Status == UserStatus.DoNotDisturb)
                 {
                     return;
@@ -809,18 +1031,20 @@ namespace Aerochat.Windows
 
                     SettingsManager.Save();
 
-                    foreach (var window in Application.Current.Windows)
+                    _ = Dispatcher.BeginInvoke(new Action(() =>
                     {
-                        if (window is Home home)
+                        foreach (var window in Application.Current.Windows)
                         {
-                            home.UpdateUnreadMessages();
-                            break;
+                            if (window is Home home)
+                            {
+                                home.UpdateUnreadMessages();
+                                break;
+                            }
                         }
-                    }
-
+                    }), DispatcherPriority.Background);
                 }
             });
-            Dispatcher.BeginInvoke(UpdateChannelListerReadReciepts);
+            _ = Dispatcher.BeginInvoke(UpdateChannelListerReadReciepts, DispatcherPriority.Background);
         }
 
         private async Task OnType(DSharpPlus.DiscordClient sender, DSharpPlus.EventArgs.TypingStartEventArgs args)
@@ -1003,94 +1227,11 @@ namespace Aerochat.Windows
                 : Visibility.Collapsed;
         }
 
-        private async Task OnVoiceStateUpdated(DiscordClient sender, DSharpPlus.EventArgs.VoiceStateUpdateEventArgs args)
+        private Task OnVoiceStateUpdated(DiscordClient sender, DSharpPlus.EventArgs.VoiceStateUpdateEventArgs args)
         {
-            var currentUser = await _chatService.GetCurrentUser();
-            bool isMe = args.User.Id == currentUser.Id;
-
-            ulong? beforeId = args.Before?.Channel?.Id;
-            ulong? afterId = args.After?.Channel?.Id;
-            bool channelChanged = beforeId != afterId;
-
-            if (channelChanged)
-            {
-                bool joined = afterId != null;
-                bool left = beforeId != null;
-
-                if (isMe)
-                {
-                    if (joined)
-                        Dispatcher.BeginInvoke(() => chatSoundPlayer.Open(SoundHelper.GetSoundUri("joincall.wav")));
-                    else if (left)
-                        Dispatcher.BeginInvoke(() => chatSoundPlayer.Open(SoundHelper.GetSoundUri("leavecall.wav")));
-                }
-                else
-                {
-                    var myChannel = VoiceManager.Instance.Channel;
-                    if (myChannel != null)
-                    {
-                        if (joined && afterId == myChannel.Id)
-                            Dispatcher.BeginInvoke(() => chatSoundPlayer.Open(SoundHelper.GetSoundUri("joincall.wav")));
-                        else if (left && beforeId == myChannel.Id)
-                            Dispatcher.BeginInvoke(() => chatSoundPlayer.Open(SoundHelper.GetSoundUri("leavecall.wav")));
-                    }
-
-                    // DM call: detect when the remote user joins or leaves our call channel
-                    if (Channel is DiscordDmChannel dmChannel)
-                    {
-                        bool isRecipient = dmChannel.Recipients.Any(r => r.Id == args.User.Id);
-                        if (isRecipient)
-                        {
-                            if (joined && afterId == Channel.Id &&
-                                VoiceManager.Instance.CurrentDmCallState == DmCallState.Ringing)
-                            {
-                                Dispatcher.BeginInvoke(OnDmCallConnected);
-                            }
-                            else if (left && beforeId == Channel.Id &&
-                                     VoiceManager.Instance.CurrentDmCallState == DmCallState.Connected)
-                            {
-                                Dispatcher.BeginInvoke(async () => await VoiceManager.Instance.LeaveVoiceChannel());
-                            }
-                        }
-                    }
-                }
-            }
-
             if (args.Guild != null && args.Guild.Id == Channel.Guild?.Id)
                 Dispatcher.BeginInvoke(RefreshChannelList);
-        }
-
-        private void OnUserSpeakingChanged(object? sender, (ulong UserId, bool IsSpeaking) e)
-        {
-            Dispatcher.BeginInvoke(() => UpdateSpeakingState(e.UserId, e.IsSpeaking));
-        }
-
-        private void OnClientSpeakingChanged(object? sender, bool isSpeaking)
-        {
-            var currentUser = Discord.Client.CurrentUser;
-            if (currentUser is null) return;
-            Dispatcher.BeginInvoke(() => UpdateSpeakingState(currentUser.Id, isSpeaking));
-        }
-
-        private void UpdateSpeakingState(ulong userId, bool isSpeaking)
-        {
-            foreach (var cat in ViewModel.Categories)
-            {
-                foreach (var item in cat.Items)
-                {
-                    foreach (var user in item.ConnectedUsers)
-                    {
-                        if (user.Id == userId)
-                            user.IsSpeaking = isSpeaking;
-                    }
-                }
-            }
-        }
-
-        private void VoiceUser_RightClick(object sender, MouseButtonEventArgs e)
-        {
-            if (sender is not FrameworkElement element || element.DataContext is not UserViewModel user) return;
-            VoiceUserContextMenu_Open(sender, e);
+            return Task.CompletedTask;
         }
 
         private void CallParticipant_RightClick(object sender, MouseButtonEventArgs e)
@@ -1098,60 +1239,320 @@ namespace Aerochat.Windows
             var recipient = VoiceManager.Instance.DmCallRecipient;
             if (recipient == null || sender is not FrameworkElement element) return;
 
-            bool isMe = recipient.Id == Discord.Client.CurrentUser.Id;
-            ShowVoiceContextMenu(recipient, isMe, element, e);
+            ShowVoiceContextMenu(recipient, element, e);
         }
 
-        public void HandleCallButtonClick()
+        private void ChatMenuButton_Click(object sender, MouseButtonEventArgs e)
         {
-            if (Channel is DiscordDmChannel)
+            var element = (FrameworkElement)sender;
+
+            MenuItem MakeItem(string header, RoutedEventHandler? onClick = null, bool isEnabled = true)
             {
-                if (VoiceManager.Instance.ChannelVM != null)
+                var item = new MenuItem { Header = header, IsEnabled = isEnabled };
+                if (onClick != null) item.Click += onClick;
+                return item;
+            }
+
+            var loc = LocalizationManager.Instance;
+            void ShowUnimplemented(object _, RoutedEventArgs __)
+            {
+                new Dialog(loc["ChatToolbarErrorTitle"], loc["ChatToolbarErrorUnimplemented"], SystemIcons.Error) { Owner = this }.ShowDialog();
+            }
+
+            RoutedEventHandler unimplemented = ShowUnimplemented;
+
+            var menu = new ContextMenu();
+
+            var fileMenu = MakeItem(loc["HomeMenuFile"]);
+            fileMenu.Items.Add(MakeItem(loc["HomeMenuSendInstantMessage"], unimplemented));
+            fileMenu.Items.Add(MakeItem(loc["HomeMenuOpenReceivedFiles"], unimplemented));
+            fileMenu.Items.Add(new Separator());
+            fileMenu.Items.Add(MakeItem(loc["SignOut"], (_, _) => _ = ((App)Application.Current).SignOut()));
+            fileMenu.Items.Add(new Separator());
+            fileMenu.Items.Add(MakeItem(loc["HomeMenuClose"], (_, _) => Close()));
+            menu.Items.Add(fileMenu);
+
+            var editMenu = MakeItem(loc["HomeMenuEdit"]);
+            editMenu.Items.Add(MakeItem(loc["HomeMenuFindContactOrPhone"], unimplemented));
+            editMenu.Items.Add(new Separator());
+            editMenu.Items.Add(MakeItem(loc["HomeMenuCopyMyContactAddress"], unimplemented));
+            editMenu.Items.Add(MakeItem(loc["HomeMenuSelectAll"], unimplemented));
+            menu.Items.Add(editMenu);
+
+            var viewMenu = MakeItem(loc["HomeMenuView"]);
+            var home = Application.Current.Windows.OfType<Home>().FirstOrDefault();
+            var layoutItem = MakeItem(
+                loc["HomeChangeContactListLayout"],
+                (_, _) =>
+                {
+                    var s = new Settings("Disposition");
+                    if (home != null) s.Owner = home;
+                    else s.Owner = this;
+                    s.ShowDialog();
+                });
+            viewMenu.Items.Add(layoutItem);
+            viewMenu.Items.Add(new Separator());
+            viewMenu.Items.Add(MakeItem(loc["HomeMenuSortByName"], unimplemented));
+            viewMenu.Items.Add(MakeItem(loc["HomeMenuSortByStatus"], unimplemented));
+            menu.Items.Add(viewMenu);
+
+            var actionsMenu = MakeItem(loc["HomeMenuActions"]);
+            actionsMenu.Items.Add(MakeItem(loc["HomeMenuSendInstantMessage"], unimplemented));
+            actionsMenu.Items.Add(MakeItem(loc["HomeMenuSendFileOrPhoto"], unimplemented));
+            actionsMenu.Items.Add(new Separator());
+            actionsMenu.Items.Add(MakeItem(loc["HomeMenuViewProfile"], unimplemented));
+            menu.Items.Add(actionsMenu);
+
+            var toolsMenu = MakeItem(loc["HomeMenuTools"]);
+            toolsMenu.Items.Add(MakeItem(loc["HomeMenuAudioVideoSetup"], unimplemented));
+            toolsMenu.Items.Add(new Separator());
+            toolsMenu.Items.Add(MakeItem(loc["HomeOptions"], (_, _) => { var s = new Settings(); s.Owner = this; s.ShowDialog(); }));
+            menu.Items.Add(toolsMenu);
+
+            var helpMenu = MakeItem(loc["HomeMenuHelpMenu"]);
+            helpMenu.Items.Add(MakeItem(loc["HomeMenuAerochatHelp"], (_, _) =>
+                Process.Start(new ProcessStartInfo(AEROCHAT_HELP_WIKI_URL) { UseShellExecute = true })));
+            helpMenu.Items.Add(new Separator());
+            helpMenu.Items.Add(MakeItem(loc["HomeMenuAboutAerochat"], (_, _) => { var a = new About(); a.Owner = this; a.ShowDialog(); }));
+            menu.Items.Add(helpMenu);
+
+            menu.PlacementTarget = element;
+            menu.Placement = PlacementMode.Bottom;
+            menu.IsOpen = true;
+        }
+
+        public void OpenUserProfilePopup(UserViewModel author, FrameworkElement placementTarget)
+        {
+            author.Bio = null;
+            _profilePopupForUserId = author.Id;
+            UserProfilePopupContent.DataContext = new { Author = author, Scene = ThemeService.Instance.Scene };
+            UserProfilePopup.PlacementTarget = placementTarget;
+            UserProfilePopup.Placement = PlacementMode.Bottom;
+            UserProfilePopup.IsOpen = true;
+            _ = FetchProfileBioAsync(author);
+        }
+
+        private async Task FetchProfileBioAsync(UserViewModel author)
+        {
+            ulong id = author.Id;
+            try
+            {
+                DiscordProfile profile = await _chatService.GetUserProfileAsync(id, true).ConfigureAwait(true);
+                string? bio = string.IsNullOrWhiteSpace(profile.Bio) ? null : profile.Bio.Trim();
+                if (!UserProfilePopup.IsOpen || _profilePopupForUserId != id)
                     return;
-                Task.Run(StartDmCall);
+                author.Bio = bio;
             }
-            else
+            catch
             {
-                ShowErrorDialog(LocalizationManager.Instance["ChatCallServerOnly"]);
+                // Profile endpoint can fail for users you cannot query; leave bio empty.
             }
         }
 
-        private async Task StartDmCall()
+        private static void PositionProfileMenuAtPoint(NonNativeTooltip tooltip, Point screenPoint)
         {
-            if (Channel is not DiscordDmChannel dmChannel) return;
-            var recipient = dmChannel.Recipients.FirstOrDefault();
-            if (recipient == null) return;
+            tooltip.UpdateLayout();
+            double w = tooltip.ActualWidth;
+            double h = tooltip.ActualHeight;
+            if (w <= 0 || h <= 0) return;
 
-            var recipientVm = UserViewModel.FromUser(recipient);
-            VoiceManager.Instance.DmCallRecipient = recipientVm;
-            VoiceManager.Instance.CurrentDmCallState = DmCallState.Ringing;
+            double left = screenPoint.X + 2;
+            double top = screenPoint.Y + 2;
 
-            await Dispatcher.InvokeAsync(() =>
-                ViewModel.CallStatusText = string.Format(LocalizationManager.Instance["ChatCallRinging"], recipient.DisplayName));
+            Rect work = SystemParameters.WorkArea;
+            if (left + w > work.Right) left = work.Right - w - 4;
+            if (top + h > work.Bottom) top = work.Bottom - h - 4;
+            if (left < work.Left) left = work.Left + 4;
+            if (top < work.Top) top = work.Top + 4;
 
-            await VoiceManager.Instance.JoinVoiceChannel(Channel, (_) => { });
-
-            // Notify Discord to ring the recipient so their client shows an incoming call
-            await Discord.Client.RingDmCallAsync(dmChannel.Id, dmChannel.Recipients.Select(r => r.Id));
+            tooltip.Left = left;
+            tooltip.Top = top;
         }
 
-        private void OnDmCallConnected()
+        private void ShowProfilePictureMenu(UserViewModel author, FrameworkElement anchor, Point screenPoint)
         {
-            _dmCallConnectedAt = DateTime.Now;
-            VoiceManager.Instance.CurrentDmCallState = DmCallState.Connected;
+            _profilePictureMenu?.Close();
 
-            _callDurationTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
-            _callDurationTimer.Tick += (_, _) =>
+            var loc = LocalizationManager.Instance;
+            var tooltip = new NonNativeTooltip(new List<NonNativeItem>
             {
-                var elapsed = DateTime.Now - _dmCallConnectedAt;
-                ViewModel.CallStatusText = string.Format(
-                    LocalizationManager.Instance["ChatCallConnected"],
-                    (int)elapsed.TotalMinutes,
-                    elapsed.Seconds);
+                new() { Name = loc["ChatShowProfileHover"], Key = "profile" }
+            });
+            _profilePictureMenu = tooltip;
+            tooltip.Owner = this;
+
+            tooltip.ItemClicked += (_, args) =>
+            {
+                // Closing the flyout before MouseUp ends lets the release hit the avatar underneath; suppress that reopen.
+                _suppressProfilePictureMenuUntilUtc = DateTime.UtcNow.AddMilliseconds(600);
+                tooltip.Close();
+                if (args.Item.Key != "profile")
+                    return;
+                // Open after this click fully completes; otherwise StaysOpen=false treats the same gesture's MouseUp as "outside" and closes the profile.
+                Dispatcher.BeginInvoke(DispatcherPriority.ApplicationIdle, () =>
+                    OpenUserProfilePopup(author, anchor));
             };
-            _callDurationTimer.Start();
-            ViewModel.CallStatusText = string.Format(
-                LocalizationManager.Instance["ChatCallConnected"], 0, 0);
+
+            tooltip.Closed += (_, _) =>
+            {
+                if (ReferenceEquals(_profilePictureMenu, tooltip))
+                    _profilePictureMenu = null;
+            };
+
+            bool menuPositioned = false;
+            EventHandler? layoutHandler = null;
+            layoutHandler = (_, _) =>
+            {
+                if (menuPositioned) return;
+                if (tooltip.ActualWidth <= 0 || tooltip.ActualHeight <= 0) return;
+                menuPositioned = true;
+                tooltip.LayoutUpdated -= layoutHandler;
+                PositionProfileMenuAtPoint(tooltip, screenPoint);
+            };
+            tooltip.LayoutUpdated += layoutHandler;
+            tooltip.Closed += (_, _) => tooltip.LayoutUpdated -= layoutHandler;
+
+            tooltip.Show();
+        }
+
+        private void Chat_PreviewMouseDown_DismissProfileMenu(object sender, MouseButtonEventArgs e)
+        {
+            if (_profilePictureMenu is not { } menu) return;
+
+            Point screen = PointToScreen(e.GetPosition(this));
+            double mw = menu.ActualWidth;
+            double mh = menu.ActualHeight;
+            if (mw <= 0 || mh <= 0)
+            {
+                mw = menu.Width;
+                mh = menu.Height;
+            }
+            if (mw <= 0 || mh <= 0) return;
+
+            var menuRect = new Rect(menu.Left, menu.Top, mw, mh);
+            if (!menuRect.Contains(screen))
+                menu.Close();
+        }
+
+        private void MessageAuthorImage_PreviewMouseUp(object sender, MouseButtonEventArgs e)
+        {
+            if (e.ChangedButton != MouseButton.Left && e.ChangedButton != MouseButton.Right)
+                return;
+            if (sender is not Image img || img.DataContext is not MessageViewModel msg || msg.Author == null)
+                return;
+            if (DateTime.UtcNow < _suppressProfilePictureMenuUntilUtc)
+            {
+                e.Handled = true;
+                return;
+            }
+            e.Handled = true;
+            Point screen = img.PointToScreen(e.GetPosition(img));
+            ShowProfilePictureMenu(msg.Author, img, screen);
+        }
+
+        private void DmProfile_PreviewMouseLeftButtonUp(object sender, MouseButtonEventArgs e)
+        {
+            if (sender is not FrameworkElement fe || fe.ContextMenu is null) return;
+            fe.ContextMenu.PlacementTarget = fe;
+            fe.ContextMenu.Placement = PlacementMode.Bottom;
+            fe.ContextMenu.IsOpen = true;
+            e.Handled = true;
+        }
+
+        /// <summary>WPF often leaves <see cref="ContextMenu.PlacementTarget"/> unset when the context menu opens; prefer <see cref="FrameworkElement.Tag"/> on the menu (set in XAML).</summary>
+        private static string? GetDmProfileMenuSlot(ContextMenu menu)
+        {
+            if (menu.Tag is string s && !string.IsNullOrEmpty(s))
+                return s;
+            if (menu.PlacementTarget is FrameworkElement fe && fe.Tag is string t)
+                return t;
+            return null;
+        }
+
+        private void DmProfile_ContextMenuOpened(object sender, RoutedEventArgs e)
+        {
+            if (sender is not ContextMenu menu) return;
+
+            string? slot = GetDmProfileMenuSlot(menu);
+
+            foreach (object? o in menu.Items)
+            {
+                if (o is not MenuItem mi) continue;
+                if (mi.Tag is not string tag || tag != "Friend") continue;
+
+                bool showFriend = slot == "Recipient"
+                    && ViewModel.Recipient is { } r
+                    && !DiscordRelationshipHelper.IsCurrentUser(Discord.Client, r.Id);
+                mi.Visibility = showFriend ? Visibility.Visible : Visibility.Collapsed;
+            }
+        }
+
+        private void DmProfile_ShowProfile_Click(object sender, RoutedEventArgs e)
+        {
+            if (sender is not MenuItem mi || mi.Parent is not ContextMenu cm) return;
+            if (!TryGetDmProfileUserFromMenu(cm, out var user) || user is null) return;
+            var anchor = cm.PlacementTarget as FrameworkElement;
+            if (anchor is null) return;
+            OpenUserProfilePopup(user, anchor);
+        }
+
+        private async void DmProfile_FriendRequest_Click(object sender, RoutedEventArgs e)
+        {
+            if (sender is not MenuItem mi || mi.Parent is not ContextMenu cm) return;
+            if (!TryGetDmProfileUserFromMenu(cm, out var user) || user is null) return;
+            if (GetDmProfileMenuSlot(cm) != "Recipient") return;
+
+            var client = Discord.Client;
+            if (client is null) return;
+            var loc = LocalizationManager.Instance;
+            if (DiscordRelationshipHelper.IsCurrentUser(client, user.Id))
+            {
+                ShowErrorDialog(loc["FriendRequestCannotTargetSelf"], loc["ChatToolbarErrorTitle"]);
+                return;
+            }
+            if (string.IsNullOrWhiteSpace(user.Username))
+            {
+                ShowErrorDialog(loc["ChatGroupMemberFriendRequestNoUsername"], loc["ChatToolbarErrorTitle"]);
+                return;
+            }
+
+            string? disc = null;
+            if (client.TryGetCachedUser(user.Id, out var du))
+            {
+                disc = du.Discriminator;
+                if (string.IsNullOrEmpty(disc) || disc == "0")
+                    disc = null;
+            }
+
+            try
+            {
+                await client.SendFriendRequestAsync(user.Username.Trim(), disc).ConfigureAwait(true);
+            }
+            catch (BadRequestException ex)
+            {
+                ShowErrorDialog(string.IsNullOrWhiteSpace(ex.JsonMessage) ? ex.Message : ex.JsonMessage, loc["AddFriendDialogTitle"]);
+            }
+            catch (Exception ex)
+            {
+                ShowErrorDialog(ex.Message, loc["ChatToolbarErrorTitle"]);
+            }
+        }
+
+        private bool TryGetDmProfileUserFromMenu(ContextMenu menu, out UserViewModel? user)
+        {
+            user = null;
+            string? slot = GetDmProfileMenuSlot(menu);
+            if (slot == "Recipient")
+            {
+                user = ViewModel.Recipient;
+                return user != null;
+            }
+            if (slot == "CurrentUser")
+            {
+                user = ViewModel.CurrentUser;
+                return user != null;
+            }
+            return false;
         }
 
         private async Task OnPresenceUpdated(DiscordClient sender, DSharpPlus.EventArgs.PresenceUpdateEventArgs args)
@@ -1159,18 +1560,23 @@ namespace Aerochat.Windows
             if (ViewModel.IsGroupChat)
             {
                 var gChannel = Channel as DiscordDmChannel;
-                var recipient = gChannel?.Recipients.FirstOrDefault(x => x.Id == args.User.Id);
+                var recipient = gChannel is null
+                    ? null
+                    : (gChannel.Recipients ?? Array.Empty<DiscordUser>()).FirstOrDefault(x => x.Id == args.User.Id);
                 if (recipient is null) return;
                 var cat = ViewModel.Categories[0];
                 var item = cat.Items.FirstOrDefault(x => x.Id == recipient.Id);
                 if (item is null) return;
                 item.Presence = PresenceViewModel.FromPresence(args.PresenceAfter);
+                return;
             }
-            else
-            {
-                if (args.User.Id != ViewModel.Recipient?.Id) return;
-                ViewModel.Recipient.Presence = PresenceViewModel.FromPresence(args.PresenceAfter);
-            }
+
+            var guild = Channel?.Guild;
+            if (guild is not null && ViewModel.IsServerMemberPanelOpen && guild.Members.ContainsKey(args.User.Id))
+                _ = Dispatcher.BeginInvoke(RefreshServerMemberList);
+
+            if (args.User.Id != ViewModel.Recipient?.Id) return;
+            ViewModel.Recipient.Presence = PresenceViewModel.FromPresence(args.PresenceAfter);
         }
 
         private async Task OnChannelUpdated(DiscordClient sender, DSharpPlus.EventArgs.ChannelUpdateEventArgs args)
@@ -1190,6 +1596,13 @@ namespace Aerochat.Windows
                 newChannel.IsSelected = true;
                 Dispatcher.BeginInvoke(() => OnChannelChange());
             }
+        }
+
+        private Task Chat_DmChannelDeleted(DiscordClient sender, DmChannelDeleteEventArgs args)
+        {
+            if (args.Channel.Id != ChannelId) return Task.CompletedTask;
+            _ = Dispatcher.BeginInvoke(new Action(Close));
+            return Task.CompletedTask;
         }
 
         private async Task OnChannelCreated(DiscordClient sender, DSharpPlus.EventArgs.ChannelCreateEventArgs args)
@@ -1268,9 +1681,20 @@ namespace Aerochat.Windows
 
         private void Chat_Closing(object? sender, CancelEventArgs e)
         {
+            // Detach owner before teardown so Windows does not apply owned-window minimize/activation side-effects to Home.
+            var home = Owner as Home ?? Application.Current.Windows.OfType<Home>().FirstOrDefault();
+            Owner = null;
+
             // clear everything up
+            SettingsManager.Instance.PropertyChanged -= OnSettingsChanged;
+            LocalizationManager.Instance.PropertyChanged -= LocalizationManager_PropertyChanged;
             ViewModel.Messages.CollectionChanged -= UpdateHiddenInfo;
             TypingUsers.CollectionChanged -= TypingUsers_CollectionChanged;
+            PART_AttachmentsEditor.ViewModel.Attachments.CollectionChanged -= OnAttachmentsEditorAttachmentsUpdated;
+            CommandManager.RemovePreviewCanExecuteHandler(MessageTextBox, MessageTextBox_OnPreviewCanExecute);
+            CommandManager.RemovePreviewExecutedHandler(MessageTextBox, MessageTextBox_OnPreviewExecuted);
+            typingTimer.Stop();
+            typingTimer.Dispose();
             foreach (var t in timers)
             {
                 t.Value.Stop();
@@ -1291,24 +1715,27 @@ namespace Aerochat.Windows
             _chatService.PresenceUpdated -= OnPresenceUpdated;
             _chatService.VoiceStateUpdated -= OnVoiceStateUpdated;
 
+            if (Discord.Client is not null)
+            {
+                Discord.Client.RelationshipAdded -= Chat_RelationshipAdded;
+                Discord.Client.RelationshipRemoved -= Chat_RelationshipRemoved;
+                Discord.Client.DmChannelDeleted -= Chat_DmChannelDeleted;
+            }
+
             ViewModel.Messages.Clear();
             TypingUsers.Clear();
 
-            System.Timers.Timer timer = new(2000);
-            timer.Elapsed += GCRelease;
-            timer.Start();
-        }
+            _profilePictureMenu?.Close();
 
-        private void GCRelease(object sender, ElapsedEventArgs e)
-        {
-            RunGCRelease();
-            ((System.Timers.Timer)sender).Stop();
-            ((System.Timers.Timer)sender).Dispose();
-        }
-
-        private void RunGCRelease()
-        {
-            GC.Collect(2, GCCollectionMode.Forced, true, true);
+            if (home is not null)
+            {
+                _ = Dispatcher.BeginInvoke(new Action(() =>
+                {
+                    if (home.WindowState == WindowState.Minimized)
+                        home.WindowState = WindowState.Normal;
+                    home.Activate();
+                }), DispatcherPriority.ApplicationIdle);
+            }
         }
 
         private async void TypingUsers_CollectionChanged(object? sender, System.Collections.Specialized.NotifyCollectionChangedEventArgs e)
@@ -1732,14 +2159,7 @@ namespace Aerochat.Windows
             if (scrollViewer is null) return;
             if (e.ExtentHeightChange == 0)
             {
-                if (scrollViewer.VerticalOffset == scrollViewer.ScrollableHeight)
-                {
-                    AutoScroll = true;
-                }
-                else
-                {
-                    AutoScroll = false;
-                }
+                AutoScroll = scrollViewer.ScrollableHeight - scrollViewer.VerticalOffset < 1.0;
             }
 
             if (AutoScroll && e.ExtentHeightChange != 0)
@@ -1795,50 +2215,13 @@ namespace Aerochat.Windows
                 {
                     case ChannelType.Voice:
                         if (prev is not null) prev.IsSelected = true;
-                        if (!SettingsManager.Instance.HasWarnedAboutVoiceChat)
                         {
-                            SettingsManager.Instance.HasWarnedAboutVoiceChat = true;
-                            SettingsManager.Save();
-                            var dialog = new Dialog(LocalizationManager.Instance["ChatCallWarning"], "Calling is currently in beta and WILL PROBABLY CRASH YOUR CLIENT. It uses your default microphone and speakers in the Windows settings, so please make sure those are properly configured. This warning will not be shown again; click the call again to join.", SystemIcons.Warning);
+                            var loc = LocalizationManager.Instance;
+                            var dialog = new Dialog(loc["ChatToolbarErrorTitle"], loc["ChatVoiceUnavailable"], SystemIcons.Information);
                             dialog.Owner = this;
                             dialog.ShowDialog();
-                            return;
                         }
-                        try
-                        {
-                            await VoiceManager.Instance.JoinVoiceChannel(channel, (e) =>
-                            {
-                                var castedItem = (HomeListItemViewModel)item;
-                                var channelID = castedItem.Id;
-                                Dispatcher.InvokeAsync(() =>
-                                {
-                                    // FIXME: this code sucks
-                                    var category = ViewModel.Categories.ToList().Find(f => f.Items.Any(f => f.Id == channelID));
-                                    if (category == null) return;
-                                    var channel = category.Items.ToList().Find(f => f.Id == channelID);
-                                    if (channel == null) return;
-                                    ulong userID = 0;
-                                    VoiceManager.Instance.VoiceSocket?.UserSSRCMap.TryGetValue(e.SSRC, out userID);
-                                    var user = castedItem.ConnectedUsers.FirstOrDefault(u => u.Id == userID);
-                                    if (user == null) return;
-                                    var index = castedItem.ConnectedUsers.IndexOf(user);
-                                    if (index == -1) return;
-                                    channel.ConnectedUsers[index].IsSpeaking = e.Speaking;
-                                });
-                            });
-                        }
-                        catch (Exception ex)
-                        {
-                            Dialog errorDialog = new(
-                                LocalizationManager.Instance["AppErrorTitle"],
-                                LocalizationManager.Instance["ChatFailedOpenVoiceChannel"] + "\n\nTechnical details: " + ex.ToString(),
-                                SystemIcons.Error
-                            );
-                            errorDialog.Owner = this;
-                            errorDialog.ShowDialog();
-                            return;
-                        }
-                        break;
+                        return;
                     default:
                         item.IsSelected = true;
                         ChannelId = item.Id;
@@ -1911,19 +2294,20 @@ namespace Aerochat.Windows
             if (messageVm is null || !messageVm.IsReply || messageVm.ReplyMessage is null) return;
 
             var replyId = messageVm.ReplyMessage.Id;
-            for (var i = 0; i < MessagesListItemsControl.Items.Count; i++)
-            {
-                var item = MessagesListItemsControl.Items[i] as MessageViewModel;
-                if (item is null) return;
+            var target = ViewModel.Messages.FirstOrDefault(m => m.Id == replyId);
+            if (target is null) return;
 
-                if (item.Id != replyId) continue;
-
-                var container = MessagesListItemsControl.ItemContainerGenerator.ContainerFromItem(item) as FrameworkElement;
-                if (container is null) return;
-
+            MessagesListItemsControl.UpdateLayout();
+            if (MessagesListItemsControl.ItemContainerGenerator.ContainerFromItem(target) is FrameworkElement container)
                 container.BringIntoView();
-                return;
-            }
+        }
+
+        /// <summary>Swaps the messages collection so channel load is one binding update; keeps <see cref="UpdateHiddenInfo"/> subscribed.</summary>
+        private void ReplaceViewModelMessages(ObservableCollection<MessageViewModel> newMessages)
+        {
+            ViewModel.Messages.CollectionChanged -= UpdateHiddenInfo;
+            ViewModel.Messages = newMessages;
+            ViewModel.Messages.CollectionChanged += UpdateHiddenInfo;
         }
 
         /// <summary>
@@ -1966,10 +2350,7 @@ namespace Aerochat.Windows
                         if (e.AssociatedObject is not DiscordUser discordUser)
                             return;
                         var authorVm = UserViewModel.FromUser(discordUser);
-                        UserProfilePopupContent.DataContext = new { Author = authorVm, Scene = ThemeService.Instance.Scene };
-                        UserProfilePopup.PlacementTarget = sender as System.Windows.UIElement;
-                        UserProfilePopup.Placement = System.Windows.Controls.Primitives.PlacementMode.Bottom;
-                        UserProfilePopup.IsOpen = true;
+                        OpenUserProfilePopup(authorVm, sender as FrameworkElement ?? this);
                         break;
                     }
 
@@ -2035,8 +2416,6 @@ namespace Aerochat.Windows
 
         private async void LeaveCallButton_PreviewMouseLeftButtonUp(object sender, MouseButtonEventArgs e)
         {
-            _callDurationTimer?.Stop();
-            _callDurationTimer = null;
             ViewModel.CallStatusText = "";
             await VoiceManager.Instance.LeaveVoiceChannel();
         }
@@ -2046,86 +2425,448 @@ namespace Aerochat.Windows
             var border = sender as FrameworkElement;
             if (border?.DataContext is not UserViewModel user) return;
 
-            bool isMe = user.Id == Discord.Client.CurrentUser.Id;
-            ShowVoiceContextMenu(user, isMe, border!, e);
+            ShowVoiceContextMenu(user, border!, e);
         }
 
-        private void ShowVoiceContextMenu(UserViewModel user, bool isMe, FrameworkElement anchor, MouseButtonEventArgs e)
+        private void ShowVoiceContextMenu(UserViewModel user, FrameworkElement anchor, MouseButtonEventArgs e)
         {
-
             var menu = new ContextMenu();
+            var loc = LocalizationManager.Instance;
 
-            var profileItem = new MenuItem { Header = "Profile" };
+            var profileItem = new MenuItem { Header = loc["VoiceMenuProfile"] };
+            profileItem.Click += (_, _) => OpenUserProfilePopup(user, anchor);
             menu.Items.Add(profileItem);
-            menu.Items.Add(new Separator());
-
-            bool isMuted = isMe ? VoiceManager.Instance.SelfMuted : VoiceManager.Instance.IsUserMuted(user.Id);
-            var muteItem = new MenuItem { Header = isMuted ? "Unmute" : "Mute", IsCheckable = false };
-            muteItem.Click += async (s, _) =>
-            {
-                if (isMe)
-                {
-                    VoiceManager.Instance.SelfMuted = !VoiceManager.Instance.SelfMuted;
-                    var ch = VoiceManager.Instance.Channel;
-                    if (ch != null)
-                        await Discord.Client.UpdateVoiceStateAsync(
-                            ch.Guild?.Id ?? ch.Id, ch.Id,
-                            VoiceManager.Instance.SelfMuted,
-                            VoiceManager.Instance.SelfDeafened);
-                }
-                else
-                    VoiceManager.Instance.SetUserMuted(user.Id, !VoiceManager.Instance.IsUserMuted(user.Id));
-            };
-            menu.Items.Add(muteItem);
-
-            if (isMe)
-            {
-                bool isDeafened = VoiceManager.Instance.SelfDeafened;
-                var deafenItem = new MenuItem { Header = isDeafened ? "Undeafen" : "Deafen", IsCheckable = false };
-                deafenItem.Click += async (s, _) =>
-                {
-                    VoiceManager.Instance.SelfDeafened = !VoiceManager.Instance.SelfDeafened;
-                    var ch = VoiceManager.Instance.Channel;
-                    if (ch != null)
-                        await Discord.Client.UpdateVoiceStateAsync(
-                            ch.Guild?.Id ?? ch.Id, ch.Id,
-                            VoiceManager.Instance.SelfMuted,
-                            VoiceManager.Instance.SelfDeafened);
-                };
-                menu.Items.Add(deafenItem);
-            }
-
-            menu.Items.Add(new Separator());
-
-            var volumeMenu = new MenuItem { Header = "Volume" };
-            float currentVol = isMe
-                ? VoiceManager.Instance.ClientTransmitVolume
-                : VoiceManager.Instance.GetUserVolume(user.Id);
-
-            int[] volumeSteps = { 0, 25, 50, 75, 100, 125, 150, 175, 200 };
-            foreach (int pct in volumeSteps)
-            {
-                float vol = pct / 100f;
-                var volItem = new MenuItem
-                {
-                    Header = $"{pct}%",
-                    IsCheckable = true,
-                    IsChecked = Math.Abs(currentVol - vol) < 0.01f
-                };
-                volItem.Click += (s, _) =>
-                {
-                    if (isMe)
-                        VoiceManager.Instance.ClientTransmitVolume = vol;
-                    else
-                        VoiceManager.Instance.SetUserVolume(user.Id, vol);
-                };
-                volumeMenu.Items.Add(volItem);
-            }
-            menu.Items.Add(volumeMenu);
 
             menu.PlacementTarget = anchor;
             menu.IsOpen = true;
             e.Handled = true;
+        }
+
+        private void GroupChatMember_PreviewMouseLeftButtonUp(object sender, MouseButtonEventArgs e)
+        {
+            if (sender is not Button btn || btn.ContextMenu is null) return;
+            if (btn.DataContext is HomeListItemViewModel row && Discord.Client?.CurrentUser is not null && row.Id != Discord.Client.CurrentUser.Id)
+            {
+                _focusedGroupMemberId = row.Id;
+                RefreshBlockToolbarAppearance();
+            }
+            btn.ContextMenu.PlacementTarget = btn;
+            btn.ContextMenu.Placement = PlacementMode.Bottom;
+            btn.ContextMenu.IsOpen = true;
+            e.Handled = true;
+        }
+
+        private void GroupChatMember_ContextMenuOpened(object sender, RoutedEventArgs e)
+        {
+            if (sender is not ContextMenu menu) return;
+
+            // PlacementTarget is often null during ContextMenuOpening; Tag/DataContext are set when Opened runs.
+            var row = menu.Tag as HomeListItemViewModel
+                ?? menu.DataContext as HomeListItemViewModel
+                ?? (menu.PlacementTarget as FrameworkElement)?.DataContext as HomeListItemViewModel;
+            if (row is null) return;
+
+            ulong selfId = Discord.Client?.CurrentUser?.Id ?? 0;
+            bool isSelf = row.Id == selfId;
+            var loc = LocalizationManager.Instance;
+            foreach (object? o in menu.Items)
+            {
+                if (o is not MenuItem mi) continue;
+                if (mi.Tag is string tag && (tag == "Message" || tag == "Friend" || tag == "Block"))
+                    mi.Visibility = isSelf ? Visibility.Collapsed : Visibility.Visible;
+                if (mi.Tag is string t && t == "Block" && !isSelf && Discord.Client is not null)
+                {
+                    mi.Header = DiscordRelationshipHelper.IsUserBlocked(Discord.Client, row.Id)
+                        ? loc["ChatGroupMemberUnblock"]
+                        : loc["ChatGroupMemberBlock"];
+                }
+            }
+
+            if (!isSelf)
+            {
+                _focusedGroupMemberId = row.Id;
+                RefreshBlockToolbarAppearance();
+            }
+        }
+
+        private static bool TryGetGroupChatMemberRow(object sender, out HomeListItemViewModel row)
+        {
+            row = null!;
+            if (sender is MenuItem mi && mi.Parent is ContextMenu cm && cm.PlacementTarget is FrameworkElement fe && fe.DataContext is HomeListItemViewModel r)
+            {
+                row = r;
+                return true;
+            }
+            return false;
+        }
+
+        private static UserViewModel UserViewModelFromGroupChatRow(HomeListItemViewModel row)
+        {
+            var vm = new UserViewModel
+            {
+                Name = row.Name,
+                Avatar = row.Image ?? "",
+                Id = row.Id,
+                Username = row.DiscordUsername ?? "",
+                Presence = row.Presence,
+                Scene = ThemeService.Instance.Scene
+            };
+            if (Discord.Client is not null)
+                vm.IsBlocked = DiscordRelationshipHelper.IsUserBlocked(Discord.Client, row.Id);
+            return vm;
+        }
+
+        private void GroupChatMember_ShowProfile_Click(object sender, RoutedEventArgs e)
+        {
+            if (!TryGetGroupChatMemberRow(sender, out var row)) return;
+            if (sender is not MenuItem mi) return;
+            var anchor = (mi.Parent as ContextMenu)?.PlacementTarget as FrameworkElement;
+            if (anchor is null) return;
+            OpenUserProfilePopup(UserViewModelFromGroupChatRow(row), anchor);
+        }
+
+        private async void GroupChatMember_SendMessage_Click(object sender, RoutedEventArgs e)
+        {
+            if (!TryGetGroupChatMemberRow(sender, out var row)) return;
+            var client = Discord.Client;
+            if (client is null) return;
+            var loc = LocalizationManager.Instance;
+            DiscordDmChannel? dm = null;
+            foreach (var c in client.PrivateChannels.Values)
+            {
+                if (c is null || c.Recipients is null || c.Recipients.Count != 1) continue;
+                if (c.Recipients[0].Id == row.Id)
+                {
+                    dm = c;
+                    break;
+                }
+            }
+
+            try
+            {
+                if (dm is null)
+                    dm = await client.CreateDmAsync(row.Id).ConfigureAwait(true);
+            }
+            catch (Exception ex)
+            {
+                ShowErrorDialog(ex.Message, loc["ChatToolbarErrorTitle"]);
+                return;
+            }
+
+            DiscordUser? recipient = dm.Recipients?.FirstOrDefault();
+            if (recipient is null && client.TryGetCachedUser(row.Id, out var cachedUser))
+                recipient = cachedUser;
+            if (recipient is null)
+            {
+                try
+                {
+                    var profile = await client.GetUserProfileAsync(row.Id, true).ConfigureAwait(true);
+                    recipient = profile.User;
+                }
+                catch (Exception ex)
+                {
+                    ShowErrorDialog(ex.Message, loc["ChatToolbarErrorTitle"]);
+                    return;
+                }
+            }
+
+            if (recipient is null)
+            {
+                ShowErrorDialog(loc["FriendsWindowOpenDmError"], loc["ChatToolbarErrorTitle"]);
+                return;
+            }
+
+            var openingItem = new HomeListItemViewModel
+            {
+                Id = dm.Id,
+                Name = row.Name,
+                Presence = row.Presence,
+                LastMsgId = dm.LastMessageId ?? dm.Id,
+                IsGroupChat = false,
+                RecipientCount = 2,
+                AvatarUrl = row.Image,
+                Image = row.Image,
+            };
+            openingItem.Recipients.Add(recipient);
+
+            Chat? existing = Application.Current.Windows.OfType<Chat>().FirstOrDefault(x => x.ChannelId == dm.Id);
+            if (existing is null)
+                new Chat(dm.Id, true, row.Presence, openingItem);
+            else
+            {
+                existing.Activate();
+                if (existing.WindowState == WindowState.Minimized)
+                    existing.WindowState = WindowState.Normal;
+            }
+        }
+
+        private async void GroupChatMember_FriendRequest_Click(object sender, RoutedEventArgs e)
+        {
+            if (!TryGetGroupChatMemberRow(sender, out var row)) return;
+            var client = Discord.Client;
+            if (client is null) return;
+            var loc = LocalizationManager.Instance;
+            if (DiscordRelationshipHelper.IsCurrentUser(client, row.Id))
+            {
+                ShowErrorDialog(loc["FriendRequestCannotTargetSelf"], loc["ChatToolbarErrorTitle"]);
+                return;
+            }
+            if (string.IsNullOrWhiteSpace(row.DiscordUsername))
+            {
+                ShowErrorDialog(loc["ChatGroupMemberFriendRequestNoUsername"], loc["ChatToolbarErrorTitle"]);
+                return;
+            }
+
+            string? disc = row.DiscordDiscriminator;
+            if (string.IsNullOrEmpty(disc) || disc == "0")
+                disc = null;
+
+            try
+            {
+                await client.SendFriendRequestAsync(row.DiscordUsername.Trim(), disc).ConfigureAwait(true);
+            }
+            catch (BadRequestException ex)
+            {
+                ShowErrorDialog(string.IsNullOrWhiteSpace(ex.JsonMessage) ? ex.Message : ex.JsonMessage, loc["AddFriendDialogTitle"]);
+            }
+            catch (Exception ex)
+            {
+                ShowErrorDialog(ex.Message, loc["ChatToolbarErrorTitle"]);
+            }
+        }
+
+        private async void GroupChatMember_Block_Click(object sender, RoutedEventArgs e)
+        {
+            if (!TryGetGroupChatMemberRow(sender, out var row)) return;
+            if (Discord.Client is not null && DiscordRelationshipHelper.IsUserBlocked(Discord.Client, row.Id))
+                await UnblockUserByIdAsync(row.Id);
+            else
+                await BlockUserByIdAsync(row.Id);
+        }
+
+        private void UpdateHasBlockedUserInConversation()
+        {
+            var client = Discord.Client;
+            bool has = false;
+            if (ViewModel.IsDM && !ViewModel.IsGroupChat && ViewModel.Recipient != null && ViewModel.Recipient.Id != 0)
+            {
+                has = ViewModel.Recipient.IsBlocked
+                    || (client is not null && DiscordRelationshipHelper.IsUserBlocked(client, ViewModel.Recipient.Id));
+            }
+            else if (ViewModel.IsGroupChat && Channel is DiscordDmChannel gdm && gdm.Recipients is not null && client?.CurrentUser is not null)
+            {
+                ulong selfId = client.CurrentUser.Id;
+                foreach (var r in gdm.Recipients)
+                {
+                    if (r.Id == selfId) continue;
+                    if (DiscordRelationshipHelper.IsUserBlocked(client, r.Id))
+                    {
+                        has = true;
+                        break;
+                    }
+                }
+            }
+
+            ViewModel.HasBlockedUserInConversation = has;
+        }
+
+        private void BlockedUserWarningDismiss_Click(object sender, MouseButtonEventArgs e)
+        {
+            ViewModel.BlockedUserWarningDismissed = true;
+        }
+
+        private void RefreshBlockToolbarAppearance()
+        {
+            if (_blockToolbarItem is null) return;
+            var loc = LocalizationManager.Instance;
+            var client = Discord.Client;
+            if (client is null) return;
+
+            bool showUnblock = false;
+            if (ViewModel.IsDM && !ViewModel.IsGroupChat && ViewModel.Recipient != null && ViewModel.Recipient.Id != 0)
+            {
+                var rid = ViewModel.Recipient.Id;
+                showUnblock = DiscordRelationshipHelper.IsUserBlocked(client, rid) || ViewModel.Recipient.IsBlocked;
+            }
+            else if (ViewModel.IsGroupChat && Channel is DiscordDmChannel gdm && gdm.Recipients is not null)
+            {
+                ulong selfId = client.CurrentUser?.Id ?? 0;
+                var others = gdm.Recipients.Where(r => r.Id != selfId).ToList();
+                if (others.Count == 0) { }
+                else if (_focusedGroupMemberId is ulong fid && fid != selfId && others.Exists(o => o.Id == fid))
+                {
+                    var row = ViewModel.Categories.FirstOrDefault()?.Items.FirstOrDefault(x => x.Id == fid);
+                    showUnblock = DiscordRelationshipHelper.IsUserBlocked(client, fid) || (row?.IsBlocked == true);
+                }
+                else if (others.Count == 1)
+                {
+                    var oid = others[0].Id;
+                    var row = ViewModel.Categories.FirstOrDefault()?.Items.FirstOrDefault(x => x.Id == oid);
+                    showUnblock = DiscordRelationshipHelper.IsUserBlocked(client, oid) || (row?.IsBlocked == true);
+                }
+            }
+
+            _blockToolbarItem.Text = showUnblock ? loc["ChatToolbarUnblock"] : loc["ChatToolbarBlock"];
+            _blockToolbarItem.ToolTip = showUnblock ? loc["ChatToolbarUnblockTooltip"] : loc["ChatToolbarBlockTooltip"];
+        }
+
+        private void LocalizationManager_PropertyChanged(object? sender, PropertyChangedEventArgs e)
+        {
+            // LoadLanguage notifies "Item[]" so LocExtension bindings refresh; toolbar uses plain strings on ToolbarItem.
+            if (e.PropertyName is null or "Item[]")
+            {
+                RefreshBlockToolbarAppearance();
+                UpdateServerMemberSectionLabels();
+            }
+        }
+
+        private Task Chat_RelationshipAdded(DiscordClient client, RelationshipAddEventArgs e)
+        {
+            _ = Dispatcher.BeginInvoke(new Action(ApplyRelationshipRefresh));
+            return Task.CompletedTask;
+        }
+
+        private Task Chat_RelationshipRemoved(DiscordClient client, RelationshipRemoveEventArgs e)
+        {
+            _ = Dispatcher.BeginInvoke(new Action(ApplyRelationshipRefresh));
+            return Task.CompletedTask;
+        }
+
+        private void ApplyRelationshipRefresh()
+        {
+            var client = Discord.Client;
+            if (client is null)
+            {
+                UpdateHasBlockedUserInConversation();
+                RefreshBlockToolbarAppearance();
+                return;
+            }
+
+            if (ViewModel.Recipient != null && ViewModel.Recipient.Id != 0)
+                ViewModel.Recipient.IsBlocked = DiscordRelationshipHelper.IsUserBlocked(client, ViewModel.Recipient.Id);
+            foreach (var m in ViewModel.Messages)
+            {
+                if (m.Author != null)
+                    m.Author.IsBlocked = DiscordRelationshipHelper.IsUserBlocked(client, m.Author.Id);
+            }
+
+            if (ViewModel.IsGroupChat)
+                _ = RefreshGroupChat();
+
+            UpdateHasBlockedUserInConversation();
+            // After Recipient / message authors / group list are in sync, so toolbar can use IsBlocked + cache.
+            RefreshBlockToolbarAppearance();
+        }
+
+        /// <summary>Shared by group member menu and top toolbar Block.</summary>
+        public async Task BlockUserByIdAsync(ulong userId)
+        {
+            var client = Discord.Client;
+            if (client is null) return;
+            var loc = LocalizationManager.Instance;
+            try
+            {
+                await client.BlockUserAsync(userId).ConfigureAwait(true);
+                ApplyRelationshipRefresh();
+                // REST can return before the gateway populates Relationships; keep UI in sync until relationship_add.
+                if (ViewModel.Recipient?.Id == userId)
+                    ViewModel.Recipient.IsBlocked = true;
+
+                RefreshBlockToolbarAppearance();
+                new Dialog(loc["HomeNoticeTitle"], loc["ChatGroupMemberBlockedNotice"], SystemIcons.Information) { Owner = this }.ShowDialog();
+            }
+            catch (Exception ex)
+            {
+                ShowErrorDialog(ex.Message, loc["ChatToolbarErrorTitle"]);
+            }
+        }
+
+        public async Task UnblockUserByIdAsync(ulong userId)
+        {
+            var client = Discord.Client;
+            if (client is null) return;
+            var loc = LocalizationManager.Instance;
+            try
+            {
+                await client.UnblockUserAsync(userId).ConfigureAwait(true);
+                ApplyRelationshipRefresh();
+                if (ViewModel.Recipient?.Id == userId)
+                    ViewModel.Recipient.IsBlocked = false;
+
+                RefreshBlockToolbarAppearance();
+                new Dialog(loc["HomeNoticeTitle"], loc["ChatUserUnblockedNotice"], SystemIcons.Information) { Owner = this }.ShowDialog();
+            }
+            catch (Exception ex)
+            {
+                ShowErrorDialog(ex.Message, loc["ChatToolbarErrorTitle"]);
+            }
+        }
+
+        /// <summary>Top toolbar Block: 1:1 blocks the recipient; group DM lists each other member.</summary>
+        public void ShowBlockToolbarMenu(FrameworkElement anchor)
+        {
+            var loc = LocalizationManager.Instance;
+            var menu = new ContextMenu();
+            var client = Discord.Client;
+            ulong currentUserId = client?.CurrentUser?.Id ?? 0;
+
+            if (ViewModel.IsGroupChat && Channel is DiscordDmChannel gdm && gdm.Recipients is not null)
+            {
+                foreach (var u in gdm.Recipients.Where(r => r.Id != currentUserId))
+                {
+                    bool blocked = client is not null && DiscordRelationshipHelper.IsUserBlocked(client, u.Id);
+                    var mi = new MenuItem
+                    {
+                        Header = blocked
+                            ? string.Format(loc["ChatToolbarUnblockUserFormat"], u.DisplayName ?? u.Username)
+                            : string.Format(loc["ChatToolbarBlockUserFormat"], u.DisplayName ?? u.Username)
+                    };
+                    ulong id = u.Id;
+                    if (blocked)
+                        mi.Click += async (_, _) => await UnblockUserByIdAsync(id);
+                    else
+                        mi.Click += async (_, _) => await BlockUserByIdAsync(id);
+                    menu.Items.Add(mi);
+                }
+            }
+            else if (ViewModel.IsDM && !ViewModel.IsGroupChat && ViewModel.Recipient != null && ViewModel.Recipient.Id != 0)
+            {
+                ulong rid = ViewModel.Recipient.Id;
+                if (client is not null && DiscordRelationshipHelper.IsUserBlocked(client, rid))
+                {
+                    var mi = new MenuItem { Header = loc["ChatToolbarUnblock"] };
+                    mi.Click += async (_, _) => await UnblockUserByIdAsync(rid);
+                    menu.Items.Add(mi);
+                }
+                else
+                {
+                    var mi1 = new MenuItem { Header = loc["ChatToolbarBlockPermanently"] };
+                    mi1.Click += async (_, _) => await BlockUserByIdAsync(rid);
+                    menu.Items.Add(mi1);
+                    var mi2 = new MenuItem { Header = loc["ChatToolbarBlockAndReport"] };
+                    mi2.Click += (_, _) =>
+                    {
+                        new Dialog(loc["ChatToolbarErrorTitle"], loc["ChatToolbarErrorUnimplemented"], SystemIcons.Error) { Owner = this }.ShowDialog();
+                    };
+                    menu.Items.Add(mi2);
+                }
+            }
+            else
+            {
+                new Dialog(loc["ChatToolbarErrorTitle"], loc["ChatToolbarErrorUnimplemented"], SystemIcons.Error) { Owner = this }.ShowDialog();
+                return;
+            }
+
+            if (menu.Items.Count == 0)
+            {
+                new Dialog(loc["HomeNoticeTitle"], loc["ChatToolbarBlockNoTargets"], SystemIcons.Information) { Owner = this }.ShowDialog();
+                return;
+            }
+
+            anchor.ContextMenu = menu;
+            menu.PlacementTarget = anchor;
+            menu.Placement = PlacementMode.Bottom;
+            menu.IsOpen = true;
         }
 
         private string GetMessageBoxText() // returns full text & converts all emoticon images to Unicode emojis
@@ -2600,10 +3341,7 @@ namespace Aerochat.Windows
         {
             if (sender is not Button button || button.DataContext is not MessageViewModel messageVm || messageVm.Author == null)
                 return;
-            UserProfilePopupContent.DataContext = new { Author = messageVm.Author, Scene = ThemeService.Instance.Scene };
-            UserProfilePopup.PlacementTarget = button;
-            UserProfilePopup.Placement = System.Windows.Controls.Primitives.PlacementMode.Bottom;
-            UserProfilePopup.IsOpen = true;
+            OpenUserProfilePopup(messageVm.Author, button);
         }
 
         private void EditButton_Click(object sender, RoutedEventArgs e)

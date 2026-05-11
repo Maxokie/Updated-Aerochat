@@ -1,6 +1,7 @@
 ﻿using Aerochat.Enums;
 using Aerochat.Helpers;
 using Aerochat.Hoarder;
+using Aerochat.Localization;
 using Aerochat.Settings;
 using Aerochat.Theme;
 using Aerochat.ViewModels;
@@ -207,9 +208,38 @@ namespace Aerochat.Windows
 
         private void OnClickLoginWithPassword(object sender, System.Windows.RoutedEventArgs e)
         {
-            var unsupportedDialog = new Dialog("Unsupported", "Browser-based login is not supported in this build. Please use token login instead.", SystemIcons.Information);
-            unsupportedDialog.Owner = this;
-            unsupportedDialog.ShowDialog();
+#if NET48
+            if (!WindowsOsVersion.IsWindows10OrGreater())
+            {
+                var loc = LocalizationManager.Instance;
+                var osDialog = new Dialog(
+                    loc["LoginUnsupportedConfig"],
+                    loc["LoginPasswordOsNotSupported"],
+                    SystemIcons.Information)
+                {
+                    Owner = this
+                };
+                osDialog.ShowDialog();
+                return;
+            }
+
+            var wnd = new DiscordLoginWV2 { Owner = this };
+            wnd.ShowDialog();
+            if (!wnd.Succeeded || string.IsNullOrEmpty(wnd.Token))
+                return;
+
+            Password.Password = wnd.Token;
+            PasswordPlaceholder.Visibility = Visibility.Hidden;
+            ViewModel.EditBoxHasContent = true;
+            SignIn_Click(this, new RoutedEventArgs());
+#else
+            MessageBox.Show(
+                this,
+                "Password login requires the .NET 4.8 build of Aerochat. Please enter your Discord token manually.",
+                "Not available in this build",
+                MessageBoxButton.OK,
+                MessageBoxImage.Information);
+#endif
         }
 
         private void PART_GetHelpLoggingInHyperlink_Click(object sender, RoutedEventArgs e)

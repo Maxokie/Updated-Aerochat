@@ -1,3 +1,4 @@
+using Aerochat.Helpers;
 using Aerochat.Localization;
 using Aerochat.Settings;
 using Aerochat.Theme;
@@ -28,7 +29,7 @@ namespace Aerochat.Windows
         public SettingsViewModel ViewModel { get; } = new();
         private const string GeneralCategoryKey = "General";
 
-        public Settings()
+        public Settings(string? initialCategoryKey = null)
         {
             InitializeComponent();
             DataContext = ViewModel;
@@ -47,8 +48,11 @@ namespace Aerochat.Windows
 
             foreach (var englishCategory in properties
                 .Select(prop => prop.GetCustomAttribute<SettingsAttribute>()!.Category)
-                .Distinct())
+                .Distinct()
+                .OrderBy(c => c, StringComparer.OrdinalIgnoreCase))
             {
+                if (englishCategory == GeneralCategoryKey)
+                    continue;
                 var locKey = "SettingsCategory" + englishCategory;
                 var translated = LocalizationManager.Instance.Get(locKey);
                 ViewModel.Categories.Add(new SettingsCategory
@@ -65,6 +69,17 @@ namespace Aerochat.Windows
             {
                 ViewModel.SettingsItems.Add(item);
             }
+
+            if (initialCategoryKey != null)
+                Loaded += (_, _) => SelectCategoryByKey(initialCategoryKey);
+        }
+
+        /// <summary>Selects a category in the left list by its English <see cref="SettingsAttribute.Category"/> key.</summary>
+        public void SelectCategoryByKey(string key)
+        {
+            var cat = ViewModel.Categories.FirstOrDefault(c => c.Key == key);
+            if (cat == null) return;
+            CategoriesListBox.SelectedItem = cat;
         }
 
         private static string GetEnumDisplayName(Enum enumValue)
@@ -181,7 +196,7 @@ namespace Aerochat.Windows
             var currentName = languages.FirstOrDefault(l => l.Code == SettingsManager.Instance.Language).Name
                               ?? SettingsManager.Instance.Language;
 
-            return new List<SettingViewModel>
+            var list = new List<SettingViewModel>
             {
                 new SettingViewModel
                 {
@@ -193,6 +208,21 @@ namespace Aerochat.Windows
                     StringValues = new ObservableCollection<string>(languages.Select(l => l.Name))
                 }
             };
+
+            var startupProp = typeof(SettingsManager).GetProperty(nameof(SettingsManager.OpenAtWindowsStartup));
+            if (startupProp?.GetCustomAttribute<SettingsAttribute>() is { } attr)
+            {
+                list.Add(new SettingViewModel
+                {
+                    Key = attr.DisplayName,
+                    Name = TranslateSettingName(startupProp),
+                    Type = nameof(Boolean),
+                    DefaultValue = startupProp.GetValue(SettingsManager.Instance)?.ToString(),
+                    RowMargin = new Thickness(0, 20, 0, 0)
+                });
+            }
+
+            return list;
         }
 
         private void ListBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -239,6 +269,8 @@ namespace Aerochat.Windows
             if (property is null || property.PropertyType != typeof(bool)) return;
             property.SetValue(SettingsManager.Instance, checkBox.IsChecked);
             SettingsManager.Save();
+            if (property.Name == nameof(SettingsManager.OpenAtWindowsStartup))
+                WindowsStartupRegistration.SetEnabled(checkBox.IsChecked == true);
         }
 
         private void ComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)

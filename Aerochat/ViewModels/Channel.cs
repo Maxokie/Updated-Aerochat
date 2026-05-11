@@ -1,12 +1,7 @@
-﻿using Aerochat.Hoarder;
-using DSharpPlus;
+﻿using DSharpPlus;
 using DSharpPlus.Entities;
 using System;
-using System.Collections.Generic;
-using System.Diagnostics;
 using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
 
 namespace Aerochat.ViewModels
 {
@@ -71,13 +66,17 @@ namespace Aerochat.ViewModels
 
         public static ChannelViewModel FromChannel(DiscordChannel channel)
         {
-            Debug.WriteLine((channel is DiscordDmChannel d ? !d.Recipients.Select(x => x.Id).ToList().Contains(643945264868098049) : true));
+            if (channel is null)
+                throw new ArgumentNullException(nameof(channel));
+
             return new ChannelViewModel
             {
-                Name = channel is DiscordDmChannel ? channel.Name ?? string.Join(", ", ((DiscordDmChannel)channel).Recipients.Select(x => x.DisplayName)) : channel.Name,
+                Name = channel is DiscordDmChannel dm
+                    ? (channel.Name ?? string.Join(", ", (dm.Recipients ?? Array.Empty<DiscordUser>()).Select(x => x.DisplayName)))
+                    : channel.Name,
                 Topic = channel.Topic ?? "",
                 Id = channel.Id,
-                CanTalk = channel is not DiscordDmChannel dmChannel ? ((channel.PermissionsFor(channel.Guild.CurrentMember) & Permissions.SendMessages) == Permissions.SendMessages) : !dmChannel.Recipients.Select(x => x.Id).ToList().Contains(643945264868098049),
+                CanTalk = channel is not DiscordDmChannel dmChannel ? ((channel.PermissionsFor(channel.Guild.CurrentMember) & Permissions.SendMessages) == Permissions.SendMessages) : true,
                 CanManageMessages = channel is not DiscordDmChannel ? ((channel.PermissionsFor(channel.Guild.CurrentMember) & Permissions.ManageMessages) == Permissions.ManageMessages) : false,
                 CanAddReactions = channel is not DiscordDmChannel ? ((channel.PermissionsFor(channel.Guild.CurrentMember) & Permissions.AddReactions) == Permissions.AddReactions) : true,
                 CanAttachFiles = channel is not DiscordDmChannel ? ((channel.PermissionsFor(channel.Guild.CurrentMember) & Permissions.AttachFiles) == Permissions.AttachFiles) : true,

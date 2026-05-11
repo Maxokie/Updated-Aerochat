@@ -45,6 +45,7 @@ namespace DSharpPlus
         /// Gets the version of the library
         /// </summary>
         private static string VersionHeader { get; set; }
+        private static string ChromeVersionString { get; set; }
         private static Dictionary<Permissions, string> PermissionStrings { get; set; }
 
         internal static UTF8Encoding UTF8 { get; } = new UTF8Encoding(false);
@@ -78,7 +79,8 @@ namespace DSharpPlus
             }
 
             var version = 70 + ((DateTime.Now.Year - 2020) * 12) + DateTime.Now.Month;
-            VersionHeader = $"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/{version}.0.0.0 Safari/537.36";
+            ChromeVersionString = $"{version}.0.0.0";
+            VersionHeader = $"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/{ChromeVersionString} Safari/537.36";
         }
 
         internal static string GetApiBaseUri()
@@ -111,6 +113,9 @@ namespace DSharpPlus
 
         internal static string GetUserAgent()
             => VersionHeader;
+
+        internal static string GetChromeVersion()
+            => ChromeVersionString;
 
         internal static bool ContainsUserMentions(string message)
         {

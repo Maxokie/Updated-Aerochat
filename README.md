@@ -32,5 +32,3 @@ In order to build Aerochat from source, you will need:
 - [Visual Studio 2022 (with the .NET Desktop Development workload)](https://visualstudio.microsoft.com)
 
 Aerochat cannot be built as `AnyCPU` due to depending on native code. You must set the build architecture to `x64` before you can build.
-
-## For any questions (that aren't already answered in the faq), please add me on Discord: maxokie

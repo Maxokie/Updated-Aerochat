@@ -6,6 +6,7 @@ using System.Collections.ObjectModel;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
+using System.Windows;
 using static Vanara.PInvoke.ShlwApi;
 
 namespace Aerochat.ViewModels
@@ -43,6 +44,11 @@ namespace Aerochat.ViewModels
         /// Optional helper text shown below the control in small grey text.
         /// </summary>
         public string Note { get; set; }
+
+        /// <summary>
+        /// Outer margin for this settings row (e.g. extra top spacing before "Open Aerochat at startup").
+        /// </summary>
+        public Thickness RowMargin { get; set; } = new Thickness(0, 4, 0, 0);
 
         public string DefaultValue
         {

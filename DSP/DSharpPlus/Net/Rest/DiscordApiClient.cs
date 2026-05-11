@@ -49,6 +49,9 @@ namespace DSharpPlus.Net
     {
         private const string REASON_HEADER_NAME = "X-Audit-Log-Reason";
 
+        /// <summary>Pre-encoded X-Context-Properties value for friend requests: {"location":"Add Friend"}.</summary>
+        private const string FriendRequestContextProperties = "eyJsb2NhdGlvbiI6IkFkZCBGcmllbmQifQ==";
+
         internal BaseDiscordClient _discord { get; }
         internal RestClient _rest { get; private set; }
 
@@ -1873,6 +1876,38 @@ namespace DSharpPlus.Net
                 _ = dc._privateChannels.TryAdd(ret.Id, ret);
 
             return ret;
+        }
+
+        /// <summary>Sends a friend request (Discord user API). POST /users/@me/relationships with X-Context-Properties like discord.py-self send_friend_request.</summary>
+        internal async Task SendFriendRequestAsync(string username, string? discriminator)
+        {
+            var route = $"{Endpoints.USERS}{Endpoints.ME}/relationships";
+            var bucket = this._rest.GetBucket(RestRequestMethod.POST, route, new { }, out var path);
+            var url = Utilities.GetApiUriFor(path);
+            var jo = new JObject { ["username"] = username };
+            jo["discriminator"] = discriminator == null ? JValue.CreateNull() : JValue.CreateString(discriminator);
+            var headers = Utilities.GetBaseHeaders();
+            headers["X-Context-Properties"] = FriendRequestContextProperties;
+            await this.DoRequestAsync(this._discord, bucket, url, RestRequestMethod.POST, route, headers, jo.ToString(Formatting.None)).ConfigureAwait(false);
+        }
+
+        /// <summary>Blocks a user (Discord user API). PUT /users/@me/relationships/:user_id with type <see cref="DiscordRelationshipType.Blocked"/>.</summary>
+        internal async Task BlockUserAsync(ulong userId)
+        {
+            var route = $"{Endpoints.USERS}{Endpoints.ME}/relationships/:user_id";
+            var bucket = this._rest.GetBucket(RestRequestMethod.PUT, route, new { user_id = userId }, out var path);
+            var url = Utilities.GetApiUriFor(path);
+            var jo = new JObject { ["type"] = (int)DiscordRelationshipType.Blocked };
+            await this.DoRequestAsync(this._discord, bucket, url, RestRequestMethod.PUT, route, payload: jo.ToString(Formatting.None)).ConfigureAwait(false);
+        }
+
+        /// <summary>Removes a relationship (e.g. unblock). DELETE /users/@me/relationships/:user_id</summary>
+        internal async Task UnblockUserAsync(ulong userId)
+        {
+            var route = $"{Endpoints.USERS}{Endpoints.ME}/relationships/:user_id";
+            var bucket = this._rest.GetBucket(RestRequestMethod.DELETE, route, new { user_id = userId }, out var path);
+            var url = Utilities.GetApiUriFor(path);
+            await this.DoRequestAsync(this._discord, bucket, url, RestRequestMethod.DELETE, route).ConfigureAwait(false);
         }
 
         internal async Task<DiscordFollowedChannel> FollowChannelAsync(ulong channel_id, ulong webhook_channel_id)

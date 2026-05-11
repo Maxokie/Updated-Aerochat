@@ -31,6 +31,8 @@ namespace Aerochat.Controls
 
         private void SetUpTimer()
         {
+            _timer.Dispose();
+            _timer = new Timer();
             _timer.Elapsed += Timer_Elapsed;
             _timer.AutoReset = true;
             _timer.Start();
@@ -182,12 +184,8 @@ namespace Aerochat.Controls
         // The control is removed from the visual tree.
         private void AnimatedTileImage_Unloaded(object sender, RoutedEventArgs e)
         {
-            // Clear the timer because we don't need it anymore.
             _timer.Stop();
             _timer.Elapsed -= Timer_Elapsed;
-
-            // force a GC collection
-            GC.Collect(2, GCCollectionMode.Forced, true, true);
         }
 
         private void UpdateFrameRenderProperties()

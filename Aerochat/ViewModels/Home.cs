@@ -1,4 +1,5 @@
 ﻿using Aerochat.Settings;
+using static Aerochat.ViewModels.HomeListViewCategory;
 using Aerochat.Theme;
 using System;
 using System.Collections.Generic;
@@ -8,7 +9,6 @@ using System.Text;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Threading;
-using static Aerochat.ViewModels.HomeListViewCategory;
 
 namespace Aerochat.ViewModels
 {
@@ -45,13 +45,6 @@ namespace Aerochat.ViewModels
             set => SetProperty(ref _showEyecandy, value);
         }
 
-        private bool _useAvatarLayout = false;
-        public bool UseAvatarLayout
-        {
-            get => _useAvatarLayout;
-            set => SetProperty(ref _useAvatarLayout, value);
-        }
-
         private string _searchText = "";
         public string SearchText
         {
@@ -69,7 +62,20 @@ namespace Aerochat.ViewModels
 
         public ObservableCollection<HomeListViewCategory> FilteredCategories { get; }
 
-        private void UpdateFilteredCategories()
+        /// <summary>Set by the home window so search-filtered categories can show correct (online/total) counts.</summary>
+        public Func<HomeListItemViewModel, bool>? EvaluateRowForCategoryHeader { get; set; }
+
+        /// <summary>Total guilds the user is in (for the Servers header).</summary>
+        public Func<int>? GetGuildTotalForHeader { get; set; }
+
+        private static bool ShouldShowHomeCategory(HomeListViewCategory cat)
+        {
+            if (cat.Name == "Favorites") return SettingsManager.Instance.HomeShowFavorites;
+            if (cat.Name == "Conversations") return SettingsManager.Instance.HomeShowConversations;
+            return SettingsManager.Instance.HomeShowServers;
+        }
+
+        public void UpdateFilteredCategories()
         {
             if (string.IsNullOrWhiteSpace(SearchText))
             {
@@ -77,6 +83,7 @@ namespace Aerochat.ViewModels
                 FilteredCategories.Clear();
                 foreach (var category in Categories)
                 {
+                    if (!ShouldShowHomeCategory(category)) continue;
                     FilteredCategories.Add(category);
                 }
                 return;
@@ -93,8 +100,11 @@ namespace Aerochat.ViewModels
 
             foreach (var category in Categories)
             {
+                if (!ShouldShowHomeCategory(category)) continue;
                 // Reuse the same category object and just update its properties
                 reusableCategory.Name = category.Name;
+                reusableCategory.CategoryHeaderText = category.CategoryHeaderText;
+                reusableCategory.CategoryHeaderCountSuffix = category.CategoryHeaderCountSuffix;
                 reusableCategory.IsVisibleProperty = category.IsVisibleProperty;
                 reusableCategory.Collapsed = category.Collapsed;
                 reusableCategory.IsSelected = category.IsSelected;
@@ -116,6 +126,8 @@ namespace Aerochat.ViewModels
                     var newCategory = new HomeListViewCategory
                     {
                         Name = reusableCategory.Name,
+                        CategoryHeaderText = reusableCategory.CategoryHeaderText,
+                        CategoryHeaderCountSuffix = reusableCategory.CategoryHeaderCountSuffix,
                         IsVisibleProperty = reusableCategory.IsVisibleProperty,
                         Collapsed = reusableCategory.Collapsed,
                         IsSelected = reusableCategory.IsSelected
@@ -124,6 +136,12 @@ namespace Aerochat.ViewModels
                     {
                         newCategory.Items.Add(item);
                     }
+
+                    if (EvaluateRowForCategoryHeader != null && GetGuildTotalForHeader != null)
+                    {
+                        HomeListViewCategory.ApplyHeaderCounts(newCategory, GetGuildTotalForHeader(), EvaluateRowForCategoryHeader);
+                    }
+
                     FilteredCategories.Add(newCategory);
                 }
             }

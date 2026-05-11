@@ -8,6 +8,7 @@
         xmlns:helpers="clr-namespace:Aerochat.Helpers"
         xmlns:controls="clr-namespace:Aerochat.Controls"
         xmlns:viewmodels="clr-namespace:Aerochat.ViewModels" d:DataContext="{d:DesignInstance Type=viewmodels:HomeWindowViewModel}"
+        xmlns:settings="clr-namespace:Aerochat.Settings;assembly=Aerochat"
         xmlns:loc="clr-namespace:Aerochat.Localization"
         mc:Ignorable="d"
         PreviewKeyDown="Window_PreviewKeyDown"
@@ -568,7 +569,7 @@
                             </Grid>
                         </Grid>
                     </Grid>
-                    <controls:HomeTreeView Grid.Row="1" Margin="2,2,2,0" UseLayoutRounding="True"
+                    <controls:HomeTreeView Grid.Row="1" Margin="0" UseLayoutRounding="True"
                               VirtualizingPanel.IsVirtualizing="True"
                               VirtualizingPanel.VirtualizationMode="Recycling"
                               ScrollViewer.CanContentScroll="True"
@@ -613,17 +614,19 @@
                                         <Button MouseDoubleClick="Button_MouseDoubleClick" HorizontalContentAlignment="Left" Style="{StaticResource TransparentStyle}" ContextMenuOpening="ItemContextMenu_Opening">
                                             <Button.ContextMenu>
                                                 <ContextMenu>
-                                                    <MenuItem Header="Favorite" Click="FavoriteMenuItem_Click" />
-                                                    <MenuItem Header="Remove from Favorites" Click="UnfavoriteMenuItem_Click" />
+                                                    <MenuItem Header="{loc:Loc HomeContextFavorite}" Click="FavoriteMenuItem_Click" />
+                                                    <MenuItem Header="{loc:Loc HomeContextRemoveFromFavorites}" Click="UnfavoriteMenuItem_Click" />
+                                                    <MenuItem Header="{loc:Loc HomeContextCloseConversation}" Click="CloseConversationMenuItem_Click" />
                                                 </ContextMenu>
                                             </Button.ContextMenu>
                                             <Grid PreviewMouseDown="ItemClick">
                                                 <Grid.Style>
                                                     <Style TargetType="Grid">
-                                                        <Setter Property="Height" Value="20" />
+                                                        <Setter Property="Height" Value="{Binding ContactRowHeight}" />
+                                                        <Setter Property="Opacity" Value="1" />
                                                         <Style.Triggers>
-                                                            <DataTrigger Binding="{Binding DataContext.UseAvatarLayout, RelativeSource={RelativeSource Mode=FindAncestor, AncestorType=local:Home}}" Value="True">
-                                                                <Setter Property="Height" Value="52" />
+                                                            <DataTrigger Binding="{Binding IsBlocked}" Value="True">
+                                                                <Setter Property="Opacity" Value="0.55" />
                                                             </DataTrigger>
                                                         </Style.Triggers>
                                                     </Style>
@@ -657,8 +660,8 @@
                                                             <Style TargetType="Grid">
                                                                 <Setter Property="Margin" Value="16,0" />
                                                                 <Style.Triggers>
-                                                                    <DataTrigger Binding="{Binding DataContext.UseAvatarLayout, RelativeSource={RelativeSource Mode=FindAncestor, AncestorType=local:Home}}" Value="True">
-                                                                        <Setter Property="Margin" Value="4,4" />
+                                                                    <DataTrigger Binding="{Binding ContactRowUsesAvatarLayout}" Value="True">
+                                                                        <Setter Property="Margin" Value="4,0" />
                                                                     </DataTrigger>
                                                                 </Style.Triggers>
                                                             </Style>
@@ -668,46 +671,83 @@
                                                             <ColumnDefinition Width="*" />
                                                         </Grid.ColumnDefinitions>
 
-                                                        <!-- Compact mode: XSFrame status icon -->
-                                                        <Image MouseLeave="MouseExitedUser" MouseEnter="MouseEnteredUser" Grid.Column="0" Width="16" Height="16">
-                                                            <Image.Style>
-                                                                <Style TargetType="Image">
-                                                                    <Setter Property="Source" Value="/Aerochat;component/Resources/Frames/XSFrameOffline.png" />
-                                                                    <Setter Property="Visibility" Value="Visible" />
-                                                                    <Style.Triggers>
-                                                                        <DataTrigger Binding="{Binding Presence.Status}" Value="Online">
-                                                                            <Setter Property="Source" Value="/Aerochat;component/Resources/Frames/XSFrameActive.png" />
-                                                                        </DataTrigger>
-                                                                        <DataTrigger Binding="{Binding Presence.Status}" Value="Idle">
-                                                                            <Setter Property="Source" Value="/Aerochat;component/Resources/Frames/XSFrameIdle.png" />
-                                                                        </DataTrigger>
-                                                                        <DataTrigger Binding="{Binding Presence.Status}" Value="DoNotDisturb">
-                                                                            <Setter Property="Source" Value="/Aerochat;component/Resources/Frames/XSFrameDnd.png" />
-                                                                        </DataTrigger>
-                                                                        <DataTrigger Binding="{Binding Presence.Status}" Value="Offline">
-                                                                            <Setter Property="Source" Value="/Aerochat;component/Resources/Frames/XSFrameOffline.png" />
-                                                                        </DataTrigger>
-                                                                        <DataTrigger Binding="{Binding Presence.Status}" Value="Invisible">
-                                                                            <Setter Property="Source" Value="/Aerochat;component/Resources/Frames/XSFrameOffline.png" />
-                                                                        </DataTrigger>
-                                                                        <DataTrigger Binding="{Binding Presence.Status}" Value="">
-                                                                            <Setter Property="Source" Value="{Binding Image}" />
-                                                                        </DataTrigger>
-                                                                        <DataTrigger Binding="{Binding IsGroupChat}" Value="True">
-                                                                            <Setter Property="Source" Value="/Aerochat;component/Resources/Frames/XSFrameActiveM.png" />
-                                                                        </DataTrigger>
-                                                                        <DataTrigger Binding="{Binding DataContext.UseAvatarLayout, RelativeSource={RelativeSource Mode=FindAncestor, AncestorType=local:Home}}" Value="True">
-                                                                            <Setter Property="Visibility" Value="Collapsed" />
-                                                                        </DataTrigger>
-                                                                    </Style.Triggers>
-                                                                </Style>
-                                                            </Image.Style>
-                                                        </Image>
+                                                        <!-- Compact mode: XSFrame status icon; guild rows show CDN icon + unread dot (AvatarUrl) -->
+                                                        <Grid Grid.Column="0" Width="16" Height="16" VerticalAlignment="Center" MouseLeave="MouseExitedUser" MouseEnter="MouseEnteredUser">
+                                                            <Image RenderOptions.BitmapScalingMode="HighQuality" Stretch="UniformToFill">
+                                                                <Image.Style>
+                                                                    <Style TargetType="Image">
+                                                                        <Setter Property="Visibility" Value="Collapsed" />
+                                                                        <Setter Property="Source" Value="{Binding AvatarUrl, Converter={StaticResource imageConverter}}" />
+                                                                        <Style.Triggers>
+                                                                            <MultiDataTrigger>
+                                                                                <MultiDataTrigger.Conditions>
+                                                                                    <Condition Binding="{Binding IsGuildServerRow}" Value="True" />
+                                                                                    <Condition Binding="{Binding ContactRowUsesAvatarLayout}" Value="False" />
+                                                                                    <Condition Binding="{Binding Source={x:Static settings:SettingsManager.Instance}, Path=ContactListStatusOnlyServerOnlineIndicator}" Value="True" />
+                                                                                </MultiDataTrigger.Conditions>
+                                                                                <Setter Property="Visibility" Value="Visible" />
+                                                                            </MultiDataTrigger>
+                                                                        </Style.Triggers>
+                                                                    </Style>
+                                                                </Image.Style>
+                                                            </Image>
+                                                            <Image Width="16" Height="16">
+                                                                <Image.Style>
+                                                                    <Style TargetType="Image">
+                                                                        <Setter Property="Source" Value="/Aerochat;component/Resources/Frames/XSFrameOffline.png" />
+                                                                        <Setter Property="Visibility" Value="Visible" />
+                                                                        <Style.Triggers>
+                                                                            <DataTrigger Binding="{Binding Presence.Status}" Value="Online">
+                                                                                <Setter Property="Source" Value="/Aerochat;component/Resources/Frames/XSFrameActive.png" />
+                                                                            </DataTrigger>
+                                                                            <DataTrigger Binding="{Binding Presence.Status}" Value="Idle">
+                                                                                <Setter Property="Source" Value="/Aerochat;component/Resources/Frames/XSFrameIdle.png" />
+                                                                            </DataTrigger>
+                                                                            <DataTrigger Binding="{Binding Presence.Status}" Value="DoNotDisturb">
+                                                                                <Setter Property="Source" Value="/Aerochat;component/Resources/Frames/XSFrameDnd.png" />
+                                                                            </DataTrigger>
+                                                                            <DataTrigger Binding="{Binding Presence.Status}" Value="Offline">
+                                                                                <Setter Property="Source" Value="/Aerochat;component/Resources/Frames/XSFrameOffline.png" />
+                                                                            </DataTrigger>
+                                                                            <DataTrigger Binding="{Binding Presence.Status}" Value="Invisible">
+                                                                                <Setter Property="Source" Value="/Aerochat;component/Resources/Frames/XSFrameOffline.png" />
+                                                                            </DataTrigger>
+                                                                            <DataTrigger Binding="{Binding Presence.Status}" Value="">
+                                                                                <Setter Property="Source" Value="{Binding Image}" />
+                                                                            </DataTrigger>
+                                                                            <DataTrigger Binding="{Binding IsGroupChat}" Value="True">
+                                                                                <Setter Property="Source" Value="/Aerochat;component/Resources/Frames/XSFrameActiveM.png" />
+                                                                            </DataTrigger>
+                                                                            <DataTrigger Binding="{Binding ContactRowUsesAvatarLayout}" Value="True">
+                                                                                <Setter Property="Visibility" Value="Collapsed" />
+                                                                            </DataTrigger>
+                                                                            <MultiDataTrigger>
+                                                                                <MultiDataTrigger.Conditions>
+                                                                                    <Condition Binding="{Binding IsGuildServerRow}" Value="True" />
+                                                                                    <Condition Binding="{Binding ContactRowUsesAvatarLayout}" Value="False" />
+                                                                                    <Condition Binding="{Binding Source={x:Static settings:SettingsManager.Instance}, Path=ContactListStatusOnlyServerOnlineIndicator}" Value="True" />
+                                                                                </MultiDataTrigger.Conditions>
+                                                                                <Setter Property="Visibility" Value="Collapsed" />
+                                                                            </MultiDataTrigger>
+                                                                            <MultiDataTrigger>
+                                                                                <MultiDataTrigger.Conditions>
+                                                                                    <Condition Binding="{Binding IsGuildServerRow}" Value="True" />
+                                                                                    <Condition Binding="{Binding ContactRowUsesAvatarLayout}" Value="False" />
+                                                                                    <Condition Binding="{Binding Source={x:Static settings:SettingsManager.Instance}, Path=ContactListStatusOnlyServerOnlineIndicator}" Value="False" />
+                                                                                </MultiDataTrigger.Conditions>
+                                                                                <Setter Property="Visibility" Value="Visible" />
+                                                                                <Setter Property="Source" Value="/Aerochat;component/Resources/Frames/XSFrameActiveM.png" />
+                                                                            </MultiDataTrigger>
+                                                                        </Style.Triggers>
+                                                                    </Style>
+                                                                </Image.Style>
+                                                            </Image>
+                                                        </Grid>
 
                                                         <!-- Avatar mode: ProfilePictureFrame with avatar image -->
                                                         <controls:ProfilePictureFrame
                                                             Grid.Column="0"
-                                                            FrameSize="Small"
+                                                            FrameSize="{Binding ContactAvatarFrameSize}"
                                                             EnableAnimation="False"
                                                             ProfilePicture="{Binding AvatarUrl, Converter={StaticResource imageConverter}}"
                                                             Margin="0,0,4,0">
@@ -717,7 +757,7 @@
                                                                     <!-- Default to Online so guild items (Presence.Status="") always show the green frame -->
                                                                     <Setter Property="UserStatus" Value="Online" />
                                                                     <Style.Triggers>
-                                                                        <DataTrigger Binding="{Binding DataContext.UseAvatarLayout, RelativeSource={RelativeSource Mode=FindAncestor, AncestorType=local:Home}}" Value="True">
+                                                                        <DataTrigger Binding="{Binding ContactRowUsesAvatarLayout}" Value="True">
                                                                             <Setter Property="Visibility" Value="Visible" />
                                                                         </DataTrigger>
                                                                         <DataTrigger Binding="{Binding Presence.Status}" Value="Offline">
@@ -736,77 +776,151 @@
                                                                 </Style>
                                                             </controls:ProfilePictureFrame.Style>
                                                         </controls:ProfilePictureFrame>
-                                                        <DockPanel HorizontalAlignment="Stretch" VerticalAlignment="Center" Grid.Column="1">
-                                                            <DockPanel.ToolTip>
-                                                                <ToolTip Content="{Binding Name}" />
-                                                            </DockPanel.ToolTip>
-                                                            <TextBlock Foreground="#333333" MouseLeave="MouseExitedUser" MouseEnter="MouseEnteredUser" HorizontalAlignment="Left" Text="{Binding Name}" TextTrimming="CharacterEllipsis">
-                                                                <TextBlock.Style>
-                                                                    <Style TargetType="TextBlock">
+                                                        <!-- Tiny: name and activity on one line. Small/Medium/Large: activity under name. -->
+                                                        <Grid HorizontalAlignment="Stretch" VerticalAlignment="Center" Grid.Column="1">
+                                                            <DockPanel VerticalAlignment="Center">
+                                                                <DockPanel.Style>
+                                                                    <Style TargetType="DockPanel">
+                                                                        <Setter Property="Visibility" Value="Visible" />
                                                                         <Style.Triggers>
-                                                                            <DataTrigger Binding="{Binding Presence.Status}" Value="">
-                                                                                <Setter Property="Margin" Value="2,0,0,0" />
+                                                                            <DataTrigger Binding="{Binding ContactRowUsesAvatarLayout}" Value="True">
+                                                                                <Setter Property="Visibility" Value="Collapsed" />
                                                                             </DataTrigger>
                                                                         </Style.Triggers>
                                                                     </Style>
-                                                                </TextBlock.Style>
-                                                            </TextBlock>
-                                                            <DockPanel>
-                                                                <TextBlock Foreground="#333333" Text=" - " TextTrimming="CharacterEllipsis">
+                                                                </DockPanel.Style>
+                                                                <DockPanel.ToolTip>
+                                                                    <ToolTip Content="{Binding Name}" />
+                                                                </DockPanel.ToolTip>
+                                                                <TextBlock DockPanel.Dock="Left" Foreground="#333333" MouseLeave="MouseExitedUser" MouseEnter="MouseEnteredUser" HorizontalAlignment="Left" Text="{Binding Name}" TextTrimming="CharacterEllipsis">
                                                                     <TextBlock.Style>
                                                                         <Style TargetType="TextBlock">
-                                                                            <Setter Property="Visibility" Value="Visible" />
                                                                             <Style.Triggers>
-                                                                                <DataTrigger Binding="{Binding Presence.Presence}" Value="">
-                                                                                    <Setter Property="Visibility" Value="Collapsed" />
-                                                                                </DataTrigger>
-                                                                                <DataTrigger Binding="{Binding IsGroupChat}" Value="True">
-                                                                                    <Setter Property="Visibility" Value="Visible" />
+                                                                                <DataTrigger Binding="{Binding Presence.Status}" Value="">
+                                                                                    <Setter Property="Margin" Value="2,0,0,0" />
                                                                                 </DataTrigger>
                                                                             </Style.Triggers>
                                                                         </Style>
                                                                     </TextBlock.Style>
                                                                 </TextBlock>
-                                                                <Image Width="16" Height="16" Margin="1,0,3,0">
-                                                                    <Image.Style>
-                                                                        <Style TargetType="Image">
+                                                                <TextBlock DockPanel.Dock="Left" Text=" - " Foreground="#888888" VerticalAlignment="Center">
+                                                                    <TextBlock.Style>
+                                                                        <Style TargetType="TextBlock">
                                                                             <Setter Property="Visibility" Value="Collapsed" />
                                                                             <Style.Triggers>
-                                                                                <DataTrigger Binding="{Binding Presence.Type}" Value="Playing">
+                                                                                <DataTrigger Binding="{Binding ContactRowShowStatusDash}" Value="True">
                                                                                     <Setter Property="Visibility" Value="Visible" />
-                                                                                    <Setter Property="Source" Value="/Aerochat;component/Resources/Status/Playing.png" />
                                                                                 </DataTrigger>
-                                                                                <DataTrigger Binding="{Binding Presence.Type}" Value="ListeningTo">
-                                                                                    <Setter Property="Visibility" Value="Visible" />
-                                                                                    <Setter Property="Source" Value="/Aerochat;component/Resources/Status/Listening.png" />
-                                                                                </DataTrigger>
-                                                                                <DataTrigger Binding="{Binding IsGroupChat}" Value="True">
-                                                                                    <Setter Property="Visibility" Value="Collapsed" />
-                                                                                </DataTrigger>
-                                                                            </Style.Triggers>
-                                                                        </Style>
-                                                                    </Image.Style>
-                                                                </Image>
-                                                                <TextBlock Foreground="#888888" TextTrimming="CharacterEllipsis">
-                                                                    <TextBlock.Style>
-                                                                        <Style TargetType="TextBlock">
-                                                                            <Setter Property="Visibility" Value="Visible" />
-                                                                            <Setter Property="Text" Value="{Binding Presence.Presence}" />
-                                                                            <Style.Triggers>
-                                                                                <DataTrigger Binding="{Binding Presence.Presence}" Value="">
-                                                                                    <Setter Property="Visibility" Value="Collapsed" />
-                                                                                </DataTrigger>
-                                                                                <DataTrigger Binding="{Binding IsGroupChat}" Value="True">
-                                                                                    <Setter Property="Visibility" Value="Visible" />
-                                                                                    <Setter Property="Text" Value="{Binding RecipientCount, Converter={StaticResource MembersCountConverter}}" />
-                                                                                </DataTrigger>
-
                                                                             </Style.Triggers>
                                                                         </Style>
                                                                     </TextBlock.Style>
                                                                 </TextBlock>
+                                                                <DockPanel>
+                                                                    <Image Width="16" Height="16" Margin="0,0,3,0">
+                                                                        <Image.Style>
+                                                                            <Style TargetType="Image">
+                                                                                <Setter Property="Visibility" Value="Collapsed" />
+                                                                                <Style.Triggers>
+                                                                                    <DataTrigger Binding="{Binding Presence.Type}" Value="Playing">
+                                                                                        <Setter Property="Visibility" Value="Visible" />
+                                                                                        <Setter Property="Source" Value="/Aerochat;component/Resources/Status/Playing.png" />
+                                                                                    </DataTrigger>
+                                                                                    <DataTrigger Binding="{Binding Presence.Type}" Value="ListeningTo">
+                                                                                        <Setter Property="Visibility" Value="Visible" />
+                                                                                        <Setter Property="Source" Value="/Aerochat;component/Resources/Status/Listening.png" />
+                                                                                    </DataTrigger>
+                                                                                    <DataTrigger Binding="{Binding IsGroupChat}" Value="True">
+                                                                                        <Setter Property="Visibility" Value="Collapsed" />
+                                                                                    </DataTrigger>
+                                                                                </Style.Triggers>
+                                                                            </Style>
+                                                                        </Image.Style>
+                                                                    </Image>
+                                                                    <TextBlock Foreground="#888888" TextTrimming="CharacterEllipsis">
+                                                                        <TextBlock.Style>
+                                                                            <Style TargetType="TextBlock">
+                                                                                <Setter Property="Visibility" Value="Visible" />
+                                                                                <Setter Property="Text" Value="{Binding Presence.Presence}" />
+                                                                                <Style.Triggers>
+                                                                                    <DataTrigger Binding="{Binding Presence.Presence}" Value="">
+                                                                                        <Setter Property="Visibility" Value="Collapsed" />
+                                                                                    </DataTrigger>
+                                                                                    <DataTrigger Binding="{Binding IsGroupChat}" Value="True">
+                                                                                        <Setter Property="Visibility" Value="Visible" />
+                                                                                        <Setter Property="Text" Value="{Binding RecipientCount, Converter={StaticResource MembersCountConverter}}" />
+                                                                                    </DataTrigger>
+                                                                                </Style.Triggers>
+                                                                            </Style>
+                                                                        </TextBlock.Style>
+                                                                    </TextBlock>
+                                                                </DockPanel>
                                                             </DockPanel>
-                                                        </DockPanel>
+                                                            <StackPanel VerticalAlignment="Center">
+                                                                <StackPanel.Style>
+                                                                    <Style TargetType="StackPanel">
+                                                                        <Setter Property="Visibility" Value="Collapsed" />
+                                                                        <Style.Triggers>
+                                                                            <DataTrigger Binding="{Binding ContactRowUsesAvatarLayout}" Value="True">
+                                                                                <Setter Property="Visibility" Value="Visible" />
+                                                                            </DataTrigger>
+                                                                        </Style.Triggers>
+                                                                    </Style>
+                                                                </StackPanel.Style>
+                                                                <StackPanel.ToolTip>
+                                                                    <ToolTip Content="{Binding Name}" />
+                                                                </StackPanel.ToolTip>
+                                                                <TextBlock Foreground="#333333" MouseLeave="MouseExitedUser" MouseEnter="MouseEnteredUser" HorizontalAlignment="Left" Text="{Binding Name}" TextTrimming="CharacterEllipsis">
+                                                                    <TextBlock.Style>
+                                                                        <Style TargetType="TextBlock">
+                                                                            <Style.Triggers>
+                                                                                <DataTrigger Binding="{Binding Presence.Status}" Value="">
+                                                                                    <Setter Property="Margin" Value="2,0,0,0" />
+                                                                                </DataTrigger>
+                                                                            </Style.Triggers>
+                                                                        </Style>
+                                                                    </TextBlock.Style>
+                                                                </TextBlock>
+                                                                <DockPanel>
+                                                                    <Image Width="16" Height="16" Margin="0,0,3,0" VerticalAlignment="Center">
+                                                                        <Image.Style>
+                                                                            <Style TargetType="Image">
+                                                                                <Setter Property="Visibility" Value="Collapsed" />
+                                                                                <Style.Triggers>
+                                                                                    <DataTrigger Binding="{Binding Presence.Type}" Value="Playing">
+                                                                                        <Setter Property="Visibility" Value="Visible" />
+                                                                                        <Setter Property="Source" Value="/Aerochat;component/Resources/Status/Playing.png" />
+                                                                                    </DataTrigger>
+                                                                                    <DataTrigger Binding="{Binding Presence.Type}" Value="ListeningTo">
+                                                                                        <Setter Property="Visibility" Value="Visible" />
+                                                                                        <Setter Property="Source" Value="/Aerochat;component/Resources/Status/Listening.png" />
+                                                                                    </DataTrigger>
+                                                                                    <DataTrigger Binding="{Binding IsGroupChat}" Value="True">
+                                                                                        <Setter Property="Visibility" Value="Collapsed" />
+                                                                                    </DataTrigger>
+                                                                                </Style.Triggers>
+                                                                            </Style>
+                                                                        </Image.Style>
+                                                                    </Image>
+                                                                    <TextBlock Foreground="#888888" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" FontSize="11">
+                                                                        <TextBlock.Style>
+                                                                            <Style TargetType="TextBlock">
+                                                                                <Setter Property="Visibility" Value="Visible" />
+                                                                                <Setter Property="Text" Value="{Binding Presence.Presence}" />
+                                                                                <Style.Triggers>
+                                                                                    <DataTrigger Binding="{Binding Presence.Presence}" Value="">
+                                                                                        <Setter Property="Visibility" Value="Collapsed" />
+                                                                                    </DataTrigger>
+                                                                                    <DataTrigger Binding="{Binding IsGroupChat}" Value="True">
+                                                                                        <Setter Property="Visibility" Value="Visible" />
+                                                                                        <Setter Property="Text" Value="{Binding RecipientCount, Converter={StaticResource MembersCountConverter}}" />
+                                                                                    </DataTrigger>
+                                                                                </Style.Triggers>
+                                                                            </Style>
+                                                                        </TextBlock.Style>
+                                                                    </TextBlock>
+                                                                </DockPanel>
+                                                            </StackPanel>
+                                                        </Grid>
                                                     </Grid>
                                                 </Grid>
                                             </Grid>
@@ -818,7 +932,7 @@
                                         <RowDefinition Height="Auto" />
                                         <RowDefinition Height="Auto" />
                                     </Grid.RowDefinitions>
-                                    <Grid Grid.Row="0" Margin="0,0,0,2" PreviewMouseDown="OnDoubleClickTreeViewExpander">
+                                    <Grid Grid.Row="0" PreviewMouseDown="OnDoubleClickTreeViewExpander">
                                         <controls:NineSlice Slice="4,4">
                                             <controls:NineSlice.Style>
                                                 <Style TargetType="controls:NineSlice">
@@ -849,7 +963,23 @@
                                             </Grid.ColumnDefinitions>
                                             <Image x:Name="PART_ExpanderButton" PreviewMouseUp="ItemToggleCollapse" Style="{StaticResource DropdownIconStyle}" />
                                             <Grid Grid.Column="1" VerticalAlignment="Center" Margin="4,0,0,0">
-                                                <TextBlock Text="{Binding Name}" FontSize="15" Foreground="#355a88" />
+                                                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                                                    <Image Width="16" Height="16" Margin="0,0,5,0" VerticalAlignment="Center" RenderOptions.BitmapScalingMode="NearestNeighbor"
+                                                           Source="/Aerochat;component/Resources/Emoji/Star.png" IsHitTestVisible="False">
+                                                        <Image.Style>
+                                                            <Style TargetType="Image">
+                                                                <Setter Property="Visibility" Value="Collapsed" />
+                                                                <Style.Triggers>
+                                                                    <DataTrigger Binding="{Binding Name}" Value="Favorites">
+                                                                        <Setter Property="Visibility" Value="Visible" />
+                                                                    </DataTrigger>
+                                                                </Style.Triggers>
+                                                            </Style>
+                                                        </Image.Style>
+                                                    </Image>
+                                                    <TextBlock VerticalAlignment="Center" Text="{Binding LocalizedTitle}" FontSize="15" Foreground="#355a88" />
+                                                    <TextBlock VerticalAlignment="Center" Text="{Binding CategoryHeaderCountSuffix}" FontSize="12" Foreground="#355a88" Opacity="0.52" Margin="1,0,0,0" />
+                                                </StackPanel>
                                             </Grid>
                                         </Grid>
                                     </Grid>

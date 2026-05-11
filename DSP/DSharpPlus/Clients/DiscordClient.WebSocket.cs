@@ -126,6 +126,7 @@ namespace DSharpPlus
             Volatile.Write(ref this._skippedHeartbeats, 0);
 
             this._webSocketClient = this.Configuration.WebSocketClientFactory(this.Configuration.Proxy);
+            this._webSocketClient.AddDefaultHeader("User-Agent", Utilities.GetUserAgent());
             this._payloadDecompressor = this.Configuration.GatewayCompressionLevel != GatewayCompressionLevel.None
                 ? new PayloadDecompressor(this.Configuration.GatewayCompressionLevel)
                 : null;

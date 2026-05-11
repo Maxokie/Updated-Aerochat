@@ -88,7 +88,7 @@ namespace Aerochat.ViewModels
 
             return new PresenceViewModel
             {
-                Presence = presenceString.Trim(),
+                Presence = (presenceString ?? "").Trim(),
                 Status = presence.Status.ToString(),
                 Type = activity?.ActivityType.ToString() ?? "",
                 CustomStatus = customStatus,

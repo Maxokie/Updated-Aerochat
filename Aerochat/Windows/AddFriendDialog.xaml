@@ -1,0 +1,32 @@
+<Window x:Class="Aerochat.Windows.AddFriendDialog"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:controls="clr-namespace:Aerochat.Controls"
+        xmlns:loc="clr-namespace:Aerochat.Localization"
+        mc:Ignorable="d"
+        Title="{loc:Loc AddFriendDialogTitle}"
+        Width="420" SizeToContent="Height" MinHeight="140"
+        ResizeMode="NoResize" WindowStartupLocation="CenterOwner"
+        Style="{StaticResource Window}">
+    <controls:BaseTitlebar Color="#f1f6fb" BlackText="Black">
+        <Grid Margin="16,12,16,16">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+            </Grid.RowDefinitions>
+            <TextBlock Grid.Row="0" TextWrapping="Wrap" Foreground="#333" Margin="0,0,0,8"
+                       Text="{loc:Loc AddFriendDialogPrompt}" />
+            <TextBox x:Name="UsernameBox" Grid.Row="1" Padding="4,3" Margin="0,0,0,12"
+                     VerticalContentAlignment="Center" />
+            <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Right" FlowDirection="RightToLeft">
+                <Button MinWidth="72" Height="23" Margin="8,0,0,0" IsDefault="True" Click="Send_Click"
+                        Content="{loc:Loc AddFriendDialogSend}" />
+                <Button MinWidth="72" Height="23" IsCancel="True"
+                        Content="{loc:Loc AddFriendDialogCancel}" />
+            </StackPanel>
+        </Grid>
+    </controls:BaseTitlebar>
+</Window>

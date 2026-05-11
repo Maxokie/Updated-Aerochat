@@ -1,3 +1,4 @@
+using Aerochat.Enums;
 using Aerochat.Helpers;
 using Aerochat.Hoarder;
 using Aerochat.Localization;
@@ -6,8 +7,11 @@ using Aerochat.ViewModels;
 using DiscordProtos.DiscordUsers.V1;
 using DSharpPlus;
 using DSharpPlus.Entities;
+using DSharpPlus.EventArgs;
 using System.Collections.Concurrent;
+using System.Collections.Generic;
 using System.ComponentModel;
+using System.Linq;
 using System.Diagnostics;
 using System.Drawing;
 using System.IO;
@@ -23,6 +27,7 @@ using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
 using System.Windows.Media.Imaging;
+using System.Windows.Threading;
 using System.Xml.Linq;
 using Vanara.PInvoke;
 using static Aerochat.ViewModels.HomeListViewCategory;
@@ -40,6 +45,12 @@ namespace Aerochat.Windows
         private static List<AdViewModel> _ads = new();
 
         private CancellationTokenSource? _homeDynamicRefreshCts;
+
+        /// <summary>Coalesces rapid <see cref="PresenceUpdateEventArgs"/> bursts into a single <see cref="UpdateStatuses"/> pass.</summary>
+        private DispatcherTimer? _updateStatusesDebounceTimer;
+
+        /// <summary>Coalesces rapid <see cref="MessageCreateEventArgs"/> / read-receipt bursts into a single home list refresh.</summary>
+        private DispatcherTimer? _updateUnreadDebounceTimer;
 
         public int AdIndex { get; set; } = 0;
 
@@ -60,6 +71,47 @@ namespace Aerochat.Windows
 
         const string AEROCHAT_HELP_WIKI_URL = "https://github.com/Maxokie/Updated-Aerochat/wiki/Frequently%E2%80%90asked-questions";
 
+        private void LocalizationManager_PropertyChanged(object? sender, PropertyChangedEventArgs e)
+        {
+            if (e.PropertyName is not (null or "Item[]")) return;
+            foreach (var cat in ViewModel.Categories)
+                cat.InvokePropertyChanged(nameof(HomeListViewCategory.LocalizedTitle));
+            _ = Dispatcher.BeginInvoke(new Action(() =>
+            {
+                if (Discord.Client?.CurrentUser is null || ViewModel.Categories.Count == 0)
+                    return;
+                RefreshCategoryHeaderCounts();
+                ViewModel.UpdateFilteredCategories();
+            }));
+        }
+
+        private void SettingsManager_PropertyChanged(object? sender, PropertyChangedEventArgs e)
+        {
+            if (e.PropertyName is null) return;
+            if (e.PropertyName != nameof(SettingsManager.ContactListIconSizeFavorites)
+                && e.PropertyName != nameof(SettingsManager.ContactListIconSizeConversationsServers)
+                && e.PropertyName != nameof(SettingsManager.ContactListStatusOnlyServerOnlineIndicator)
+                && e.PropertyName != nameof(SettingsManager.HomeShowFavorites)
+                && e.PropertyName != nameof(SettingsManager.HomeShowConversations)
+                && e.PropertyName != nameof(SettingsManager.HomeShowServers))
+                return;
+
+            _ = Dispatcher.BeginInvoke(new Action(() =>
+            {
+                InvalidateAllContactItemLayouts();
+                ViewModel.UpdateFilteredCategories();
+            }));
+        }
+
+        private void InvalidateAllContactItemLayouts()
+        {
+            foreach (var cat in ViewModel.Categories)
+            {
+                foreach (var item in cat.Items)
+                    item.InvalidateContactLayout();
+            }
+        }
+
         public PresenceViewModel? FindPresenceForUserId(ulong userId)
         {
             foreach (var category in ViewModel.Categories)
@@ -79,12 +131,45 @@ namespace Aerochat.Windows
         public Home()
         {
             InitializeComponent();
+            ViewModel.EvaluateRowForCategoryHeader = RowIsActiveForHeader;
+            ViewModel.GetGuildTotalForHeader = () => Discord.Client?.Guilds.Count ?? 0;
+            SettingsManager.Instance.PropertyChanged += SettingsManager_PropertyChanged;
+            LocalizationManager.Instance.PropertyChanged += LocalizationManager_PropertyChanged;
             Closing += (_, _) =>
             {
+                SettingsManager.Instance.PropertyChanged -= SettingsManager_PropertyChanged;
+                SettingsManager.Instance.PropertyChanged -= OnSettingsChange;
+                LocalizationManager.Instance.PropertyChanged -= LocalizationManager_PropertyChanged;
                 try { _homeDynamicRefreshCts?.Cancel(); }
                 catch (Exception ex) { DiagnosticsLog.Swallowed("Home.Closing: cancel dynamic refresh", ex); }
                 _homeDynamicRefreshCts?.Dispose();
                 _homeDynamicRefreshCts = null;
+                _updateStatusesDebounceTimer?.Stop();
+                _updateStatusesDebounceTimer = null;
+                _updateUnreadDebounceTimer?.Stop();
+                _updateUnreadDebounceTimer = null;
+                newsTimer.Stop();
+                newsTimer.Dispose();
+                _adTimer.Stop();
+                _adTimer.Dispose();
+                _hoverTimer.Stop();
+                _hoverTimer.Dispose();
+                if (Discord.Client is not null)
+                {
+                    Discord.Client.PresenceUpdated -= InvokeUpdateStatuses;
+                    Discord.Client.ChannelCreated -= ChannelCreatedEvent;
+                    Discord.Client.ChannelDeleted -= ChannelDeletedEvent;
+                    Discord.Client.DmChannelDeleted -= DmChannelDeletedEvent;
+                    Discord.Client.VoiceStateUpdated -= VoiceStateUpdatedEvent;
+                    Discord.Client.GuildUpdated -= Home_GuildUpdated;
+                    Discord.Client.GuildCreated -= Home_GuildCreated;
+                    Discord.Client.GuildAvailable -= Home_GuildCreated;
+                    Discord.Client.GuildDeleted -= Home_GuildDeleted;
+                    Discord.Client.RelationshipAdded -= Home_RelationshipAdded;
+                    Discord.Client.RelationshipRemoved -= Home_RelationshipRemoved;
+                    Discord.Client.MessageCreated -= Home_MessageCreated;
+                }
+                DiscordUserSettingsManager.Instance.UserSettingsUpdated -= OnUserSettingsUpdated;
             };
             Loaded += HomeListView_Loaded;
             Loaded += Home_InitializeAfterFirstLoad;
@@ -144,8 +229,34 @@ namespace Aerochat.Windows
             }
         }
 
+        /// <summary>Debounced refresh of server row unread indicators (call from gateway bursts).</summary>
         public void UpdateUnreadMessages()
         {
+            if (Discord.Client?.CurrentUser is null || ViewModel.Categories.Count == 0)
+                return;
+
+            if (_updateUnreadDebounceTimer is null)
+            {
+                _updateUnreadDebounceTimer = new DispatcherTimer(DispatcherPriority.Background, Dispatcher)
+                {
+                    Interval = TimeSpan.FromMilliseconds(80),
+                };
+                _updateUnreadDebounceTimer.Tick += (_, _) =>
+                {
+                    _updateUnreadDebounceTimer.Stop();
+                    RunUpdateUnreadMessages();
+                };
+            }
+
+            _updateUnreadDebounceTimer.Stop();
+            _updateUnreadDebounceTimer.Start();
+        }
+
+        /// <summary>Immediate unread refresh (e.g. after building the server list).</summary>
+        private void RunUpdateUnreadMessages()
+        {
+            if (Discord.Client?.CurrentUser is null) return;
+
             foreach (var category in ViewModel.Categories)
             {
                 foreach (var item in category.Items)
@@ -153,7 +264,9 @@ namespace Aerochat.Windows
                     Discord.Client.TryGetCachedChannel(item.Id, out var c);
                     if (c is null || c is DiscordDmChannel) continue;
                     Discord.Client.TryGetCachedGuild(c.GuildId ?? 0, out var guild);
-                    if (guild is null) return;
+                    if (guild is null) continue;
+
+                    bool hasUnread = false;
                     foreach (var channelId in guild.Channels)
                     {
                         bool found = SettingsManager.Instance.LastReadMessages.TryGetValue(channelId.Key, out var lastReadMessageId);
@@ -172,14 +285,12 @@ namespace Aerochat.Windows
                         var lastMessageTime = DateTimeOffset.FromUnixTimeMilliseconds(((long)(lastMessageId >> 22) + 1420070400000)).DateTime;
                         if (lastMessageTime > lastReadMessageTime)
                         {
-                            item.Image="/Aerochat;component/Resources/Frames/XSFrameActiveM.png";
+                            hasUnread = true;
                             break;
                         }
-                        else
-                        {
-                            item.Image="/Aerochat;component/Resources/Frames/XSFrameIdleM.png";
-                        }
                     }
+
+                    item.GuildHasUnread = hasUnread;
                 }
             }
         }
@@ -277,33 +388,21 @@ namespace Aerochat.Windows
                 Discord.Client.PresenceUpdated += InvokeUpdateStatuses;
                 Discord.Client.ChannelCreated += ChannelCreatedEvent;
                 Discord.Client.ChannelDeleted += ChannelDeletedEvent;
+                Discord.Client.DmChannelDeleted += DmChannelDeletedEvent;
                 Discord.Client.VoiceStateUpdated += VoiceStateUpdatedEvent;
+                Discord.Client.GuildUpdated += Home_GuildUpdated;
+                Discord.Client.GuildCreated += Home_GuildCreated;
+                Discord.Client.GuildAvailable += Home_GuildCreated;
+                Discord.Client.GuildDeleted += Home_GuildDeleted;
+                Discord.Client.RelationshipAdded += Home_RelationshipAdded;
+                Discord.Client.RelationshipRemoved += Home_RelationshipRemoved;
                 DiscordUserSettingsManager.Instance.UserSettingsUpdated += OnUserSettingsUpdated;
 
                 UpdateStatuses();
                 AddGuilds();
                 RefreshFavoritesCategory();
 
-                Discord.Client.MessageCreated += async (s, e) =>
-                {
-                    if (e.Channel is DiscordDmChannel)
-                    {
-                        // find the private channel in Discord.Client.PrivateChannels
-                        var dm = Discord.Client.PrivateChannels[e.Channel.Id];
-                        // using reflection, set the last message id to the new message id
-                        dm.GetType().GetProperty("LastMessageId").SetValue(dm, e.Message.Id);
-                        UpdateStatuses();
-                    } else
-                    {
-                        if (!Discord.Client.TryGetCachedGuild(e.Channel.GuildId ?? 0, out var guild)) return;
-                        if (!Discord.Client.TryGetCachedChannel(e.Channel.Id, out var channel)) return;
-                        if (channel.Type != ChannelType.Text && channel.Type != ChannelType.Announcement) return;
-
-                        guild.Channels[channel.Id].GetType().GetProperty("LastMessageId").SetValue(guild.Channels[channel.Id], e.Message.Id);
-                    }
-
-                    UpdateUnreadMessages();
-                };
+                Discord.Client.MessageCreated += Home_MessageCreated;
 
                 _hoverTimer.Elapsed += OnTimerEnd;
                 _hoverTimer.AutoReset = false;
@@ -754,7 +853,9 @@ namespace Aerochat.Windows
         private async Task VoiceStateUpdatedEvent(DiscordClient sender, DSharpPlus.EventArgs.VoiceStateUpdateEventArgs args)
         {
             if (args.Guild is null) return;
-            var voiceStates = args.Guild.GetType().GetField("_voiceStates", BindingFlags.NonPublic | BindingFlags.Instance).GetValue(args.Guild) as ConcurrentDictionary<ulong, DiscordVoiceState>;
+            var field = args.Guild.GetType().GetField("_voiceStates", BindingFlags.NonPublic | BindingFlags.Instance);
+            if (field is null) return;
+            var voiceStates = field.GetValue(args.Guild) as ConcurrentDictionary<ulong, DiscordVoiceState>;
             if (voiceStates is null) return;
             if (args.Channel is null)
             {
@@ -771,6 +872,25 @@ namespace Aerochat.Windows
             if (args.Channel.GuildId is null) await Dispatcher.InvokeAsync(() => UpdateStatuses());
         }
 
+        private Task DmChannelDeletedEvent(DiscordClient sender, DmChannelDeleteEventArgs args)
+        {
+            _ = Dispatcher.BeginInvoke(new Action(() =>
+            {
+                UpdateStatuses();
+                bool dirty = SettingsManager.Instance.FavoriteConversationIds.Remove(args.Channel.Id);
+                if (SettingsManager.Instance.RecentDMChats.Remove(args.Channel.Id))
+                    dirty = true;
+                if (SettingsManager.Instance.LastReadMessages.Remove(args.Channel.Id))
+                    dirty = true;
+                if (dirty)
+                {
+                    SettingsManager.Save();
+                    RefreshFavoritesCategory();
+                }
+            }));
+            return Task.CompletedTask;
+        }
+
         private async Task ChannelCreatedEvent(DiscordClient sender, DSharpPlus.EventArgs.ChannelCreateEventArgs args)
         {
             if (args.Channel.GuildId is null) await Dispatcher.InvokeAsync(() => UpdateStatuses());
@@ -780,11 +900,206 @@ namespace Aerochat.Windows
         {
             try
             {
-                await Dispatcher.InvokeAsync(() => UpdateStatuses());
+                await Dispatcher.InvokeAsync(ScheduleUpdateStatuses);
             }
             catch (TaskCanceledException)
             {
                 // Ignore.
+            }
+        }
+
+        private void ScheduleUpdateStatuses()
+        {
+            if (_updateStatusesDebounceTimer is null)
+            {
+                _updateStatusesDebounceTimer = new DispatcherTimer(DispatcherPriority.Background, Dispatcher)
+                {
+                    Interval = TimeSpan.FromMilliseconds(120),
+                };
+                _updateStatusesDebounceTimer.Tick += (_, _) =>
+                {
+                    _updateStatusesDebounceTimer.Stop();
+                    UpdateStatuses();
+                };
+            }
+
+            _updateStatusesDebounceTimer.Stop();
+            _updateStatusesDebounceTimer.Start();
+        }
+
+        private Task Home_MessageCreated(DiscordClient s, MessageCreateEventArgs e)
+        {
+            if (e.Channel is DiscordDmChannel)
+            {
+                var dm = Discord.Client.PrivateChannels[e.Channel.Id];
+                DiscordChannelLastMessageId.TrySet(dm, e.Message.Id);
+                UpdateStatuses();
+            }
+            else
+            {
+                if (!Discord.Client.TryGetCachedGuild(e.Channel.GuildId ?? 0, out var guild)) return Task.CompletedTask;
+                if (!Discord.Client.TryGetCachedChannel(e.Channel.Id, out var channel)) return Task.CompletedTask;
+                if (channel.Type != ChannelType.Text && channel.Type != ChannelType.Announcement) return Task.CompletedTask;
+
+                DiscordChannelLastMessageId.TrySet(guild.Channels[channel.Id], e.Message.Id);
+            }
+
+            UpdateUnreadMessages();
+            return Task.CompletedTask;
+        }
+
+        /// <summary>
+        /// Guild list rows use the first text channel id as <see cref="HomeListItemViewModel.Id"/>; refresh name/icon when Discord pushes GUILD_UPDATE.
+        /// </summary>
+        private Task Home_GuildUpdated(DiscordClient client, GuildUpdateEventArgs e)
+        {
+            var guild = e.GuildAfter ?? e.GuildBefore;
+            if (guild is null) return Task.CompletedTask;
+
+            _ = Dispatcher.BeginInvoke(new Action(() =>
+            {
+                if (Discord.Client?.CurrentUser is null) return;
+                ApplyGuildAppearanceToHomeListItems(guild);
+            }));
+            return Task.CompletedTask;
+        }
+
+        private Task Home_GuildCreated(DiscordClient client, GuildCreateEventArgs e)
+        {
+            if (e.Guild is null) return Task.CompletedTask;
+            _ = Dispatcher.BeginInvoke(new Action(() => TryAddGuildToSidebar(e.Guild)));
+            return Task.CompletedTask;
+        }
+
+        private Task Home_GuildDeleted(DiscordClient client, GuildDeleteEventArgs e)
+        {
+            if (e.Unavailable || e.Guild is null) return Task.CompletedTask;
+            var gid = e.Guild.Id;
+            _ = Dispatcher.BeginInvoke(new Action(() => RemoveGuildFromSidebar(gid)));
+            return Task.CompletedTask;
+        }
+
+        /// <summary>Adds a server row when the user joins a guild (or when <see cref="GuildAvailable"/> fires). Skips if already listed.</summary>
+        private void TryAddGuildToSidebar(DiscordGuild guild)
+        {
+            if (Discord.Client?.CurrentUser is null || ViewModel.Categories.Count < 3) return;
+            if (SidebarContainsGuild(guild.Id)) return;
+            if (!TryGetFirstAccessibleTextChannelId(guild, out ulong channelItemId)) return;
+
+            int categoryIndex = ResolveCategoryIndexForGuild(guild.Id);
+            if (categoryIndex < 0 || categoryIndex >= ViewModel.Categories.Count)
+                categoryIndex = Math.Min(2, ViewModel.Categories.Count - 1);
+
+            CreateAndInsertGuild(guild.Name, channelItemId, categoryIndex, guild.IconUrl ?? "", guild.Id);
+            RefreshCategoryHeaderCounts();
+            ViewModel.UpdateFilteredCategories();
+            RunUpdateUnreadMessages();
+        }
+
+        private void RemoveGuildFromSidebar(ulong serverGuildId)
+        {
+            if (Discord.Client?.CurrentUser is null) return;
+
+            foreach (var cat in ViewModel.Categories)
+            {
+                for (int i = cat.Items.Count - 1; i >= 0; i--)
+                {
+                    var item = cat.Items[i];
+                    if (!item.IsGuildServerRow) continue;
+                    bool match = item.GuildId != 0
+                        ? item.GuildId == serverGuildId
+                        : Discord.Client.TryGetCachedChannel(item.Id, out var ch) && ch.GuildId == serverGuildId;
+                    if (match)
+                        cat.Items.RemoveAt(i);
+                }
+            }
+
+            RefreshFavoritesCategory();
+            RefreshCategoryHeaderCounts();
+            ViewModel.UpdateFilteredCategories();
+            RunUpdateUnreadMessages();
+        }
+
+        private bool SidebarContainsGuild(ulong serverGuildId)
+        {
+            if (Discord.Client is null) return false;
+            foreach (var cat in ViewModel.Categories)
+            {
+                foreach (var item in cat.Items)
+                {
+                    if (!item.IsGuildServerRow) continue;
+                    if (item.GuildId != 0)
+                    {
+                        if (item.GuildId == serverGuildId) return true;
+                        continue;
+                    }
+                    if (Discord.Client.TryGetCachedChannel(item.Id, out var ch) && ch.GuildId == serverGuildId)
+                        return true;
+                }
+            }
+            return false;
+        }
+
+        private int ResolveCategoryIndexForGuild(ulong serverGuildId)
+        {
+            var folders = DiscordUserSettingsManager.Instance.UserSettingsProto?.GuildFolders?.Folders;
+            if (folders is not null)
+            {
+                foreach (var folder in folders)
+                {
+                    if (!folder.GuildIds.Contains(serverGuildId)) continue;
+                    if (string.IsNullOrEmpty(folder.Name))
+                        return 2;
+                    var cat = ViewModel.Categories.FirstOrDefault(c => c.Name == folder.Name);
+                    if (cat is not null)
+                        return ViewModel.Categories.IndexOf(cat);
+                }
+            }
+            return 2;
+        }
+
+        private static bool TryGetFirstAccessibleTextChannelId(DiscordGuild guild, out ulong channelItemId)
+        {
+            channelItemId = 0;
+            var channelsList = new List<DiscordChannel>();
+            foreach (var c in guild.Channels.Values)
+            {
+                if ((c.PermissionsFor(guild.CurrentMember) & Permissions.AccessChannels) == Permissions.AccessChannels && c.Type == ChannelType.Text)
+                    channelsList.Add(c);
+            }
+            if (channelsList.Count == 0) return false;
+            channelsList.Sort((x, y) => x.Position.CompareTo(y.Position));
+            channelItemId = channelsList[0].Id;
+            return true;
+        }
+
+        private void ApplyGuildAppearanceToHomeListItems(DiscordGuild guild)
+        {
+            if (Discord.Client is null) return;
+
+            string iconUrl = guild.IconUrl ?? "";
+            string name = guild.Name;
+
+            foreach (var cat in ViewModel.Categories)
+            {
+                foreach (var item in cat.Items)
+                {
+                    if (!Discord.Client.TryGetCachedChannel(item.Id, out var ch)) continue;
+                    if (ch is DiscordDmChannel) continue;
+                    if (ch.GuildId != guild.Id) continue;
+
+                    // Do not replace a valid URL with empty when the gateway payload omitted icon (see UpdateCachedGuild merge).
+                    if (!string.IsNullOrWhiteSpace(iconUrl))
+                    {
+                        if (item.AvatarUrl != iconUrl)
+                            item.AvatarUrl = iconUrl;
+                    }
+                    else if (string.IsNullOrWhiteSpace(item.AvatarUrl))
+                        item.AvatarUrl = "";
+
+                    if (item.Name != name)
+                        item.Name = name;
+                }
             }
         }
 
@@ -825,7 +1140,7 @@ namespace Aerochat.Windows
 
                         if (channelsList.Count == 0) continue;
 
-                        CreateAndInsertGuild(guild.Name, channelsList[0].Id, index, guild.IconUrl ?? "");
+                        CreateAndInsertGuild(guild.Name, channelsList[0].Id, index, guild.IconUrl ?? "", guild.Id);
                         processedGuilds.Add(guildId);
                     }
                 }
@@ -850,18 +1165,19 @@ namespace Aerochat.Windows
 
                 channelsList.Sort((x, y) => x.Position.CompareTo(y.Position));
 
-                CreateAndInsertGuild(guild.Name, channelsList.ElementAtOrDefault(0)?.Id ?? 0, 2, guild.IconUrl ?? "");
+                CreateAndInsertGuild(guild.Name, channelsList.ElementAtOrDefault(0)?.Id ?? 0, 2, guild.IconUrl ?? "", guild.Id);
             }
-            UpdateUnreadMessages();
+            RunUpdateUnreadMessages();
         }
 
-        private void CreateAndInsertGuild(string name, ulong guildId, int categoryIndex, string iconUrl = "")
+        private void CreateAndInsertGuild(string name, ulong channelItemId, int categoryIndex, string iconUrl, ulong serverGuildId)
         {
             var guildItem = new HomeListItemViewModel
             {
                 Name = name,
-                Image="/Aerochat;component/Resources/Frames/XSFrameIdleM.png",
                 AvatarUrl = iconUrl,
+                IsGuildServerRow = true,
+                GuildId = serverGuildId,
                 Presence = new PresenceViewModel
                 {
                     Presence = "",
@@ -870,17 +1186,60 @@ namespace Aerochat.Windows
                 },
                 IsSelected = false,
                 LastMsgId = 0,
-                Id = guildId
+                Id = channelItemId,
+                ListSection = ContactListSectionKind.Servers,
             };
 
             ViewModel.Categories[categoryIndex].Items.Add(guildItem);
+        }
+
+        private static bool IsActivePresenceStatus(string? status) =>
+            status is "Online" or "Idle" or "DoNotDisturb";
+
+        /// <summary>
+        /// A row counts toward the "online" numerator if the DM is Online/Idle/DND, or (group) any other member is.
+        /// </summary>
+        private bool RowIsActiveForHeader(HomeListItemViewModel item)
+        {
+            if (Discord.Client?.CurrentUser is null)
+                return false;
+
+            if (!item.IsGroupChat)
+                return IsActivePresenceStatus(item.Presence?.Status);
+
+            foreach (var u in item.Recipients)
+            {
+                if (u.Id == Discord.Client.CurrentUser.Id)
+                    continue;
+                if (Discord.Client.Presences.TryGetValue(u.Id, out var pr) && IsActivePresenceStatus(pr.Status.ToString()))
+                    return true;
+            }
+
+            return false;
+        }
+
+        private void RefreshCategoryHeaderCounts()
+        {
+            if (Discord.Client?.CurrentUser is null || ViewModel.Categories.Count == 0)
+                return;
+
+            int guildTotal = Discord.Client.Guilds.Count;
+
+            foreach (var cat in ViewModel.Categories)
+            {
+                HomeListViewCategory.ApplyHeaderCounts(cat, guildTotal, RowIsActiveForHeader);
+            }
         }
 
         private void RefreshFavoritesCategory()
         {
             if (ViewModel.Categories.Count == 0) return;
             var favoritesCategory = ViewModel.Categories[0];
-            if (favoritesCategory.Name != "Favorites") return;
+            if (favoritesCategory.Name != "Favorites")
+            {
+                RefreshCategoryHeaderCounts();
+                return;
+            }
 
             favoritesCategory.Items.Clear();
 
@@ -892,7 +1251,11 @@ namespace Aerochat.Windows
                 {
                     var source = ViewModel.Categories[conversationsIndex].Items.FirstOrDefault(i => i.Id == id);
                     if (source != null)
-                        favoritesCategory.Items.Add(CloneListItem(source));
+                    {
+                        var fav = CloneListItem(source);
+                        fav.ListSection = ContactListSectionKind.Favorites;
+                        favoritesCategory.Items.Add(fav);
+                    }
                 }
             }
 
@@ -904,11 +1267,15 @@ namespace Aerochat.Windows
                     var source = ViewModel.Categories[catIndex].Items.FirstOrDefault(i => i.Id == id);
                     if (source != null)
                     {
-                        favoritesCategory.Items.Add(CloneListItem(source));
+                        var fav = CloneListItem(source);
+                        fav.ListSection = ContactListSectionKind.Favorites;
+                        favoritesCategory.Items.Add(fav);
                         break; // each guild appears in only one category
                     }
                 }
             }
+
+            RefreshCategoryHeaderCounts();
         }
 
         private static HomeListItemViewModel CloneListItem(HomeListItemViewModel source)
@@ -918,14 +1285,48 @@ namespace Aerochat.Windows
                 Id = source.Id,
                 Name = source.Name,
                 Image = source.Image,
+                AvatarUrl = source.AvatarUrl,
+                IsGuildServerRow = source.IsGuildServerRow,
+                GuildId = source.GuildId,
+                GuildHasUnread = source.GuildHasUnread,
                 Presence = source.Presence,
                 IsGroupChat = source.IsGroupChat,
                 RecipientCount = source.RecipientCount,
                 LastMsgId = source.LastMsgId,
+                ListSection = source.ListSection,
+                IsBlocked = source.IsBlocked,
             };
             foreach (var r in source.Recipients) clone.Recipients.Add(r);
             foreach (var u in source.ConnectedUsers) clone.ConnectedUsers.Add(u);
             return clone;
+        }
+
+        private Task Home_RelationshipAdded(DiscordClient client, RelationshipAddEventArgs e)
+        {
+            _ = Dispatcher.BeginInvoke(new Action(RefreshBlockedConversationRows));
+            return Task.CompletedTask;
+        }
+
+        private Task Home_RelationshipRemoved(DiscordClient client, RelationshipRemoveEventArgs e)
+        {
+            _ = Dispatcher.BeginInvoke(new Action(RefreshBlockedConversationRows));
+            return Task.CompletedTask;
+        }
+
+        private void RefreshBlockedConversationRows()
+        {
+            if (Discord.Client?.CurrentUser is null) return;
+            ulong selfId = Discord.Client.CurrentUser.Id;
+            foreach (var item in ViewModel.Categories[1].Items)
+            {
+                if (!item.IsGroupChat && item.Recipients.Count > 0)
+                {
+                    var other = item.Recipients.FirstOrDefault(r => r.Id != selfId);
+                    item.IsBlocked = other is not null && DiscordRelationshipHelper.IsUserBlocked(Discord.Client, other.Id);
+                }
+                else
+                    item.IsBlocked = false;
+            }
         }
 
         private void UpdateStatuses()
@@ -960,11 +1361,23 @@ namespace Aerochat.Windows
                         IsSelected = existingItem?.IsSelected ?? false,
                         IsGroupChat = isGroupChat,
                         RecipientCount = dm.Recipients.Count + 1, // to account for ourselves, i think?
-                        AvatarUrl = isGroupChat ? "" : (recipient.AvatarUrl ?? recipient.DefaultAvatarUrl ?? ""),
+                        AvatarUrl = isGroupChat
+                            ? (dm.IconUrl ?? recipient.AvatarUrl ?? recipient.DefaultAvatarUrl ?? "")
+                            : (recipient.AvatarUrl ?? recipient.DefaultAvatarUrl ?? ""),
+                        ListSection = ContactListSectionKind.Conversations,
                     };
 
                     if (dm?.Recipients is not null) foreach (DiscordUser user in dm.Recipients)
                         newItem.Recipients.Add(user);
+
+                    ulong selfId = Discord.Client.CurrentUser.Id;
+                    if (!isGroupChat)
+                    {
+                        var other = dm.Recipients.FirstOrDefault(r => r.Id != selfId);
+                        newItem.IsBlocked = other is not null && DiscordRelationshipHelper.IsUserBlocked(Discord.Client, other.Id);
+                    }
+                    else
+                        newItem.IsBlocked = false;
 
                     newList.Add(newItem);
                 }
@@ -998,6 +1411,8 @@ namespace Aerochat.Windows
                         existingItem.IsSelected = newItem.IsSelected;
                         existingItem.Presence = newItem.Presence;
                         existingItem.AvatarUrl = newItem.AvatarUrl;
+                        existingItem.ListSection = ContactListSectionKind.Conversations;
+                        existingItem.IsBlocked = newItem.IsBlocked;
                     }
                     else
                     {
@@ -1026,14 +1441,16 @@ namespace Aerochat.Windows
                 {
                     // List unchanged; still refresh favorites so loaded-from-config favorites appear
                     RefreshFavoritesCategory();
-                    return;
                 }
-                ViewModel.Categories[1].Items.Clear();
-                foreach (var item in newList)
+                else
                 {
-                    ViewModel.Categories[1].Items.Add(item);
+                    ViewModel.Categories[1].Items.Clear();
+                    foreach (var item in newList)
+                    {
+                        ViewModel.Categories[1].Items.Add(item);
+                    }
+                    RefreshFavoritesCategory();
                 }
-                RefreshFavoritesCategory();
             });
         }
 
@@ -1138,7 +1555,7 @@ namespace Aerochat.Windows
             if (sender is not Button button || button.DataContext is not HomeListItemViewModel listItem)
                 return;
             var contextMenu = button.ContextMenu;
-            if (contextMenu?.Items.Count != 2) return;
+            if (contextMenu?.Items.Count < 2) return;
             var favoriteItem = contextMenu.Items[0] as MenuItem;
             var unfavoriteItem = contextMenu.Items[1] as MenuItem;
             if (favoriteItem == null || unfavoriteItem == null) return;
@@ -1148,6 +1565,13 @@ namespace Aerochat.Windows
                 || SettingsManager.Instance.FavoriteGuildIds.Contains(listItem.Id);
             favoriteItem.Visibility = inFavorites || alreadyFavorited ? Visibility.Collapsed : Visibility.Visible;
             unfavoriteItem.Visibility = inFavorites || alreadyFavorited ? Visibility.Visible : Visibility.Collapsed;
+
+            if (contextMenu.Items.Count > 2 && contextMenu.Items[2] is MenuItem closeItem)
+            {
+                var client = Discord.Client;
+                bool isDm = client?.PrivateChannels.ContainsKey(listItem.Id) == true;
+                closeItem.Visibility = isDm ? Visibility.Visible : Visibility.Collapsed;
+            }
         }
 
         private void FavoriteMenuItem_Click(object sender, RoutedEventArgs e)
@@ -1184,6 +1608,39 @@ namespace Aerochat.Windows
             SettingsManager.Instance.FavoriteGuildIds.Remove(item.Id);
             SettingsManager.Save();
             RefreshFavoritesCategory();
+        }
+
+        private async void CloseConversationMenuItem_Click(object sender, RoutedEventArgs e)
+        {
+            var item = GetListItemFromContextMenuSender(sender);
+            if (item is null) return;
+            var client = Discord.Client;
+            if (client is null) return;
+            if (!client.PrivateChannels.TryGetValue(item.Id, out var dm))
+                return;
+
+            var loc = LocalizationManager.Instance;
+            try
+            {
+                await dm.DeleteAsync().ConfigureAwait(true);
+
+                bool settingsDirty = false;
+                if (SettingsManager.Instance.FavoriteConversationIds.Remove(item.Id))
+                    settingsDirty = true;
+                if (SettingsManager.Instance.RecentDMChats.Remove(item.Id))
+                    settingsDirty = true;
+                if (SettingsManager.Instance.LastReadMessages.Remove(item.Id))
+                    settingsDirty = true;
+                if (settingsDirty)
+                    SettingsManager.Save();
+
+                RefreshFavoritesCategory();
+                UpdateStatuses();
+            }
+            catch (Exception ex)
+            {
+                new Dialog(loc["HomeNoticeTitle"], ex.Message, SystemIcons.Error) { Owner = this }.ShowDialog();
+            }
         }
 
         private static HomeListItemViewModel? GetListItemFromContextMenuSender(object sender)
@@ -1359,13 +1816,16 @@ namespace Aerochat.Windows
 
         private void OptionsBtn_Click(object sender, RoutedEventArgs e)
         {
-            Settings settings = new();
+            var settings = new Settings();
+            settings.Owner = this;
             settings.ShowDialog();
         }
 
         private void ChangeLayoutButton_Click(object sender, MouseButtonEventArgs e)
         {
-            ViewModel.UseAvatarLayout = !ViewModel.UseAvatarLayout;
+            var settings = new Settings("Disposition");
+            settings.Owner = this;
+            settings.ShowDialog();
         }
 
         private void ShowUnimplementedDialog()
@@ -1382,12 +1842,20 @@ namespace Aerochat.Windows
 
         private void MailButton_Click(object sender, MouseButtonEventArgs e)
         {
-            ShowUnimplementedDialog();
+            try
+            {
+                Process.Start(new ProcessStartInfo("mailto:") { UseShellExecute = true });
+            }
+            catch (Exception ex)
+            {
+                DiagnosticsLog.Swallowed("Home.MailButton_Click: open default mail", ex);
+            }
         }
 
         private void AddContactButton_Click(object sender, MouseButtonEventArgs e)
         {
-            ShowUnimplementedDialog();
+            var friends = new FriendsWindow { Owner = this };
+            friends.Show();
         }
 
         private void UnimplementedMenuItem_Click(object sender, RoutedEventArgs e)
@@ -1409,56 +1877,62 @@ namespace Aerochat.Windows
             RoutedEventHandler unimplemented = (_, _) => ShowUnimplementedDialog();
 
             var menu = new ContextMenu();
+            var loc = LocalizationManager.Instance;
 
             // File
-            var fileMenu = MakeItem("File");
-            fileMenu.Items.Add(MakeItem("Send an Instant Message", unimplemented));
-            fileMenu.Items.Add(MakeItem("Open Received Files", unimplemented));
+            var fileMenu = MakeItem(loc["HomeMenuFile"]);
+            fileMenu.Items.Add(MakeItem(loc["HomeMenuSendInstantMessage"], unimplemented));
+            fileMenu.Items.Add(MakeItem(loc["HomeMenuOpenReceivedFiles"], unimplemented));
             fileMenu.Items.Add(new Separator());
-            fileMenu.Items.Add(MakeItem("Sign Out", (_, _) => _ = ((App)Application.Current).SignOut()));
+            fileMenu.Items.Add(MakeItem(loc["SignOut"], (_, _) => _ = ((App)Application.Current).SignOut()));
             fileMenu.Items.Add(new Separator());
-            fileMenu.Items.Add(MakeItem("Close", (_, _) => Application.Current.Shutdown()));
+            fileMenu.Items.Add(MakeItem(loc["HomeMenuClose"], (_, _) => Application.Current.Shutdown()));
             menu.Items.Add(fileMenu);
 
             // Edit
-            var editMenu = MakeItem("Edit");
-            editMenu.Items.Add(MakeItem("Find a Contact or Phone Number...", unimplemented));
+            var editMenu = MakeItem(loc["HomeMenuEdit"]);
+            editMenu.Items.Add(MakeItem(loc["HomeMenuFindContactOrPhone"], unimplemented));
             editMenu.Items.Add(new Separator());
-            editMenu.Items.Add(MakeItem("Copy My Contact Address", unimplemented));
-            editMenu.Items.Add(MakeItem("Select All", unimplemented));
+            editMenu.Items.Add(MakeItem(loc["HomeMenuCopyMyContactAddress"], unimplemented));
+            editMenu.Items.Add(MakeItem(loc["HomeMenuSelectAll"], unimplemented));
             menu.Items.Add(editMenu);
 
             // View
-            var viewMenu = MakeItem("View");
-            var layoutItem = MakeItem(ViewModel.UseAvatarLayout ? "Switch to Compact View" : "Switch to Avatar View",
-                (_, _) => ViewModel.UseAvatarLayout = !ViewModel.UseAvatarLayout);
+            var viewMenu = MakeItem(loc["HomeMenuView"]);
+            var layoutItem = MakeItem(loc["HomeChangeContactListLayout"],
+                (_, _) =>
+                {
+                    var s = new Settings("Disposition");
+                    s.Owner = this;
+                    s.ShowDialog();
+                });
             viewMenu.Items.Add(layoutItem);
             viewMenu.Items.Add(new Separator());
-            viewMenu.Items.Add(MakeItem("Sort Contacts by Name", unimplemented));
-            viewMenu.Items.Add(MakeItem("Sort Contacts by Status", unimplemented));
+            viewMenu.Items.Add(MakeItem(loc["HomeMenuSortByName"], unimplemented));
+            viewMenu.Items.Add(MakeItem(loc["HomeMenuSortByStatus"], unimplemented));
             menu.Items.Add(viewMenu);
 
             // Actions
-            var actionsMenu = MakeItem("Actions");
-            actionsMenu.Items.Add(MakeItem("Send an Instant Message", unimplemented));
-            actionsMenu.Items.Add(MakeItem("Send a File or Photo", unimplemented));
+            var actionsMenu = MakeItem(loc["HomeMenuActions"]);
+            actionsMenu.Items.Add(MakeItem(loc["HomeMenuSendInstantMessage"], unimplemented));
+            actionsMenu.Items.Add(MakeItem(loc["HomeMenuSendFileOrPhoto"], unimplemented));
             actionsMenu.Items.Add(new Separator());
-            actionsMenu.Items.Add(MakeItem("View Profile", unimplemented));
+            actionsMenu.Items.Add(MakeItem(loc["HomeMenuViewProfile"], unimplemented));
             menu.Items.Add(actionsMenu);
 
             // Tools
-            var toolsMenu = MakeItem("Tools");
-            toolsMenu.Items.Add(MakeItem("Audio and Video Setup", unimplemented));
+            var toolsMenu = MakeItem(loc["HomeMenuTools"]);
+            toolsMenu.Items.Add(MakeItem(loc["HomeMenuAudioVideoSetup"], unimplemented));
             toolsMenu.Items.Add(new Separator());
-            toolsMenu.Items.Add(MakeItem("Options", (_, _) => { var s = new Settings(); s.ShowDialog(); }));
+            toolsMenu.Items.Add(MakeItem(loc["HomeOptions"], (_, _) => { var s = new Settings(); s.Owner = this; s.ShowDialog(); }));
             menu.Items.Add(toolsMenu);
 
             // Help
-            var helpMenu = MakeItem("?");
-            helpMenu.Items.Add(MakeItem("Aerochat Help", (_, _) =>
+            var helpMenu = MakeItem(loc["HomeMenuHelpMenu"]);
+            helpMenu.Items.Add(MakeItem(loc["HomeMenuAerochatHelp"], (_, _) =>
                 Process.Start(new ProcessStartInfo(AEROCHAT_HELP_WIKI_URL) { UseShellExecute = true })));
             helpMenu.Items.Add(new Separator());
-            helpMenu.Items.Add(MakeItem("About Aerochat", (s, _) => CreditsBtn_Click(s, new RoutedEventArgs())));
+            helpMenu.Items.Add(MakeItem(loc["HomeMenuAboutAerochat"], (s, _) => CreditsBtn_Click(s, new RoutedEventArgs())));
             menu.Items.Add(helpMenu);
 
             menu.PlacementTarget = element;

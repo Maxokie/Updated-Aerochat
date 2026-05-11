@@ -115,7 +115,7 @@
             <ItemsControl Margin="0,24,0,0" ItemsSource="{Binding SettingsItems}">
                 <ItemsControl.ItemTemplate>
                     <DataTemplate>
-                        <Grid Margin="0,4,0,0">
+                        <Grid Margin="{Binding RowMargin}">
                             <!-- For Boolean Settings -->
                             <StackPanel Orientation="Horizontal">
                                 <StackPanel.Style>

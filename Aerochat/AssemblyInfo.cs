@@ -1,6 +1,9 @@
 using System.Reflection;
+using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Windows;
+
+[assembly: InternalsVisibleTo("Aerotest")]
 
 [assembly: ThemeInfo(
     ResourceDictionaryLocation.None,            //where theme specific resource dictionaries are located
@@ -20,14 +23,14 @@ using System.Windows;
 
 static class AssemblyInfo
 {
-    public const string Version = "0.3.0";
+    public const string Version = "0.4.0";
 
 #if AEROCHAT_RC
     /// <summary>
     /// The last version of Aerochat. Prerelease versions are treated as their previous version by the
     /// update checker so they get pushed to update to the final RTM build.
     /// </summary>
-    public static readonly string RC_LAST_VERSION = "0.2.4";
+    public static readonly string RC_LAST_VERSION = "0.3.0";
 
     /// <summary>
     /// The revision string for the current prerelease version. This can be any arbitrary string such as

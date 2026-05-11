@@ -503,6 +503,68 @@ namespace DSharpPlus
         }
 
         /// <summary>
+        /// Opens or creates a DM channel with the specified user.
+        /// </summary>
+        public Task<DiscordDmChannel> CreateDmAsync(ulong recipientId)
+            => this.ApiClient.CreateDmAsync(recipientId);
+
+        /// <summary>
+        /// Sends a friend request by username. Pass <paramref name="discriminator"/> for legacy username#discriminator accounts; omit for new usernames.
+        /// </summary>
+        public Task SendFriendRequestAsync(string username, string? discriminator = null)
+            => this.ApiClient.SendFriendRequestAsync(username, discriminator);
+
+        /// <summary>
+        /// Blocks the specified user (Discord user client API).
+        /// </summary>
+        public async Task BlockUserAsync(ulong userId)
+        {
+            await this.ApiClient.BlockUserAsync(userId).ConfigureAwait(false);
+            // Keep Relationships in sync with REST; gateway may arrive late or duplicate with mismatched keys.
+            this.UpsertBlockedRelationshipInCache(userId);
+        }
+
+        /// <summary>
+        /// Removes the relationship with the specified user (e.g. unblock).
+        /// </summary>
+        public async Task UnblockUserAsync(ulong userId)
+        {
+            await this.ApiClient.UnblockUserAsync(userId).ConfigureAwait(false);
+            this.RemoveRelationshipFromCacheByUserId(userId);
+        }
+
+        /// <summary>
+        /// Removes any cached relationship for this user (keyed by relationship id, which may differ from user id).
+        /// </summary>
+        internal void RemoveRelationshipFromCacheByUserId(ulong userId)
+        {
+            if (userId == 0)
+                return;
+
+            foreach (var kv in this._relationships.ToArray())
+            {
+                if (kv.Key == userId || kv.Value.UserId == userId)
+                    this._relationships.TryRemove(kv.Key, out _);
+            }
+        }
+
+        internal void UpsertBlockedRelationshipInCache(ulong userId)
+        {
+            if (userId == 0)
+                return;
+
+            this.RemoveRelationshipFromCacheByUserId(userId);
+            var rel = new DiscordRelationship
+            {
+                Discord = this,
+                RelationshipType = DiscordRelationshipType.Blocked,
+                UserId = userId
+            };
+            rel.Id = userId;
+            this._relationships[userId] = rel;
+        }
+
+        /// <summary>
         /// Gets a channel
         /// </summary>
         /// <param name="id">The ID of the channel to get.</param>
@@ -1219,35 +1281,44 @@ namespace DSharpPlus
                 foreach (var newStageInstance in newGuild._stageInstances.Values)
                     _ = guild._stageInstances.GetOrAdd(newStageInstance.Id, _ => newStageInstance);
 
-            guild.Name = newGuild.Name;
+            // GUILD_UPDATE often omits unchanged fields; deserializing yields null and must not wipe the cache.
+            if (newGuild.Name != null)
+                guild.Name = newGuild.Name;
             guild._afkChannelId = newGuild._afkChannelId;
             guild.AfkTimeout = newGuild.AfkTimeout;
             guild.DefaultMessageNotifications = newGuild.DefaultMessageNotifications;
-            guild.Features = newGuild.Features;
-            guild.IconHash = newGuild.IconHash;
+            if (newGuild.Features != null)
+                guild.Features = newGuild.Features;
+            if (newGuild.IconHash != null)
+                guild.IconHash = newGuild.IconHash;
             guild.MfaLevel = newGuild.MfaLevel;
             guild.OwnerId = newGuild.OwnerId;
             guild._voiceRegionId = newGuild._voiceRegionId;
-            guild.SplashHash = newGuild.SplashHash;
+            if (newGuild.SplashHash != null)
+                guild.SplashHash = newGuild.SplashHash;
             guild.VerificationLevel = newGuild.VerificationLevel;
             guild.WidgetEnabled = newGuild.WidgetEnabled;
             guild._widgetChannelId = newGuild._widgetChannelId;
             guild.ExplicitContentFilter = newGuild.ExplicitContentFilter;
             guild.PremiumTier = newGuild.PremiumTier;
             guild.PremiumSubscriptionCount = newGuild.PremiumSubscriptionCount;
-            guild.Banner = newGuild.Banner;
-            guild.Description = newGuild.Description;
-            guild.VanityUrlCode = newGuild.VanityUrlCode;
-            guild.Banner = newGuild.Banner;
+            if (newGuild.Banner != null)
+                guild.Banner = newGuild.Banner;
+            if (newGuild.Description != null)
+                guild.Description = newGuild.Description;
+            if (newGuild.VanityUrlCode != null)
+                guild.VanityUrlCode = newGuild.VanityUrlCode;
             guild._systemChannelId = newGuild._systemChannelId;
             guild.SystemChannelFlags = newGuild.SystemChannelFlags;
-            guild.DiscoverySplashHash = newGuild.DiscoverySplashHash;
+            if (newGuild.DiscoverySplashHash != null)
+                guild.DiscoverySplashHash = newGuild.DiscoverySplashHash;
             guild.MaxMembers = newGuild.MaxMembers;
             guild.MaxPresences = newGuild.MaxPresences;
             guild.ApproximateMemberCount = newGuild.ApproximateMemberCount;
             guild.ApproximatePresenceCount = newGuild.ApproximatePresenceCount;
             guild.MaxVideoChannelUsers = newGuild.MaxVideoChannelUsers;
-            guild.PreferredLocale = newGuild.PreferredLocale;
+            if (newGuild.PreferredLocale != null)
+                guild.PreferredLocale = newGuild.PreferredLocale;
             guild._rulesChannelId = newGuild._rulesChannelId;
             guild._publicUpdatesChannelId = newGuild._publicUpdatesChannelId;
             guild.PremiumProgressBarEnabled = newGuild.PremiumProgressBarEnabled;

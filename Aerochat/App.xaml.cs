@@ -282,6 +282,7 @@ namespace Aerochat
             }
 
             SettingsManager.Load();
+            WindowsStartupRegistration.SetEnabled(SettingsManager.Instance.OpenAtWindowsStartup);
 
             // Apply the saved locale as early as possible so every window opened
             // afterward already uses the correct language.
@@ -475,6 +476,27 @@ namespace Aerochat
                 CloseSplashIfVisible();
                 new Home().Show();
             });
+
+            _ = CheckForUpdatesAsync();
+        }
+
+        private async Task CheckForUpdatesAsync()
+        {
+            try
+            {
+                var info = await UpdateChecker.CheckAsync().ConfigureAwait(false);
+                if (info is null) return;
+
+                await Dispatcher.InvokeAsync(() =>
+                {
+                    var dialog = new UpdateAvailableDialog(info);
+                    dialog.Show();
+                });
+            }
+            catch (Exception ex)
+            {
+                DiagnosticsLog.Swallowed("App.CheckForUpdatesAsync", ex);
+            }
         }
 
         /// <summary>
@@ -539,6 +561,31 @@ namespace Aerochat
             });
         }
 
+        /// <summary>
+        /// When Discord rotates the user token, keep the on-disk encrypted session in sync if the user persists login.
+        /// </summary>
+        private void RegisterAuthTokenPersistence(DiscordClient client, bool persistRotatedToken)
+        {
+            client.AuthTokenUpdate += (_, e) =>
+            {
+                if (!persistRotatedToken || string.IsNullOrEmpty(e.Token))
+                    return Task.CompletedTask;
+
+                try
+                {
+                    byte[] encryptedToken = ProtectedData.Protect(Encoding.UTF8.GetBytes(e.Token), null, DataProtectionScope.CurrentUser);
+                    SettingsManager.Instance.Token = Convert.ToBase64String(encryptedToken);
+                    SettingsManager.Save();
+                }
+                catch (Exception ex)
+                {
+                    DiagnosticsLog.Swallowed("AuthTokenUpdate: persist failed", ex);
+                }
+
+                return Task.CompletedTask;
+            };
+        }
+
         public async Task<AerochatLoginStatus> BeginLogin(string givenToken, bool save = false, UserStatus? status = null)
         {
             // Replace any existing client (startup placeholder, previous failed attempt, etc.) without leaking sockets.
@@ -549,6 +596,9 @@ namespace Aerochat
                 Token = givenToken,
                 TokenType = TokenType.User,
             });
+
+            bool persistRotatedToken = save || !string.IsNullOrEmpty(SettingsManager.Instance.Token);
+            RegisterAuthTokenPersistence(Discord.Client, persistRotatedToken);
 
             _initialUserStatus = status;
 
@@ -625,11 +675,6 @@ namespace Aerochat
             }
             Dispatcher.Invoke(() =>
             {
-                Timer timer = new(5000);
-                timer.Elapsed += GCRelease;
-                timer.AutoReset = false;
-                timer.Start();
-
                 HWND desktopHandle = GetDesktopWindow();
                 HWND shellHandle = GetShellWindow();
 
@@ -877,7 +922,6 @@ namespace Aerochat
             {
                 TokenType = TokenType.User,
             });
-            GC.Collect(2, GCCollectionMode.Forced, true, true);
 
             JumpList.SetJumpList(this, null);
 
@@ -1021,12 +1065,6 @@ namespace Aerochat
             args.SetResponse(await tcs.Task);
         }
 
-        private void GCRelease(object? sender, System.Timers.ElapsedEventArgs _)
-        {
-            ((System.Timers.Timer?)(sender))?.Stop();
-            GC.Collect(2, GCCollectionMode.Forced, true, true);
-        }
-
         private void ListenForArgumentsMessage(object? state)
         {
             while (true)
@@ -1103,7 +1141,7 @@ namespace Aerochat
             if (s_hasShownUncaughtExceptionBefore)
                 return;
 
-            byte[] exceptionUtf8 = Encoding.UTF8.GetBytes(exception.ToString());
+            byte[] exceptionUtf8 = Encoding.UTF8.GetBytes(CrashReportRedactor.Sanitize(exception.ToString()));
             string exceptionBase64 = Convert.ToBase64String(exceptionUtf8);
 
             Shell32.ShellExecute(HWND.NULL,

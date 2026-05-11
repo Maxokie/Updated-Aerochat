@@ -128,6 +128,28 @@ namespace Aerochat.Settings
 
             var json = File.ReadAllText(path);
             TryLoadFromJson(json);
+            MigrateLegacyContactListLayout(json);
+        }
+
+        private static void MigrateLegacyContactListLayout(string json)
+        {
+            try
+            {
+                var settings = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(json);
+                if (settings == null) return;
+                if (settings.ContainsKey(nameof(ContactListIconSizeFavorites)))
+                    return;
+                if (!settings.ContainsKey(nameof(ContactListUseAvatarLayout)))
+                    return;
+                bool legacy = settings[nameof(ContactListUseAvatarLayout)].GetBoolean();
+                Instance.ContactListIconSizeFavorites = legacy ? ContactListIconSize.Large : ContactListIconSize.Tiny;
+                Instance.ContactListIconSizeConversationsServers = legacy ? ContactListIconSize.Large : ContactListIconSize.Tiny;
+                Save();
+            }
+            catch
+            {
+                // ignore migration failures
+            }
         }
 
         private static bool TryLoadFromJson(string json)
@@ -184,9 +206,18 @@ namespace Aerochat.Settings
         /// </summary>
         public string Language { get; set; } = "en";
 
+        /// <summary>Legacy: compact vs avatar; migrated to <see cref="ContactListIconSizeFavorites"/> / <see cref="ContactListIconSizeConversationsServers"/>.</summary>
+        public bool ContactListUseAvatarLayout { get; set; } = false;
+
         #endregion
 
         #region Public Settings
+        /// <summary>
+        /// When true, a Run registry entry starts Aerochat at Windows logon. Shown under General in Options.
+        /// </summary>
+        [Settings("General", "Open Aerochat at startup")]
+        public bool OpenAtWindowsStartup { get; set; } = true;
+
         // Volatile setting, will be removed when the beta warning is removed.
         [Settings("Alerts", "Show beta warning on startup")]
         public bool ShowBetaWarning { get; set; } = true;
@@ -260,6 +291,25 @@ namespace Aerochat.Settings
         [Settings("Appearance", "Enable developer commands in context menus")]
 
         public bool DiscordDeveloperMode { get; set; } = false;
+
+        [Settings("Disposition", "Show favorites")]
+        public bool HomeShowFavorites { get; set; } = true;
+
+        [Settings("Disposition", "Show conversations")]
+        public bool HomeShowConversations { get; set; } = true;
+
+        [Settings("Disposition", "Show servers")]
+        public bool HomeShowServers { get; set; } = true;
+
+        [Settings("Disposition", "Icon size for favorites")]
+        public ContactListIconSize ContactListIconSizeFavorites { get; set; } = ContactListIconSize.Small;
+
+        [Settings("Disposition", "Icon size for conversations and servers")]
+        public ContactListIconSize ContactListIconSizeConversationsServers { get; set; } = ContactListIconSize.Small;
+
+        [Settings("Disposition", "In status-only layout, show server icon instead of status indicator")]
+        public bool ContactListStatusOnlyServerOnlineIndicator { get; set; } = false;
+
         
         [Settings("Audio", "Input device [Requires rejoining if changed mid-call]"), MultiStringToIntAction("FetchInputDevices")]
         

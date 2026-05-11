@@ -56,16 +56,6 @@ namespace Aerochat.ViewModels
                     chat.OpenAttachmentsFilePicker();
                 }
             }, false, LocalizationManager.Instance["ChatToolbarFilesTooltip"]),
-            new(LocalizationManager.Instance["ChatToolbarVideo"], (FrameworkElement itemElement) =>
-            {
-                Debug.WriteLine("Video clicked");
-                OnUmimplementedAction(itemElement);
-            }, true),
-            new(LocalizationManager.Instance["ChatToolbarCall"], (FrameworkElement itemElement) =>
-            {
-                Chat? chat = Window.GetWindow(itemElement) as Chat;
-                chat?.HandleCallButtonClick();
-            }, false, LocalizationManager.Instance["ChatToolbarCallTooltip"]),
             new(LocalizationManager.Instance["ChatToolbarGames"], (FrameworkElement itemElement) =>
             {
                 Debug.WriteLine("Games clicked");
@@ -83,21 +73,8 @@ namespace Aerochat.ViewModels
             }, true),
             new(LocalizationManager.Instance["ChatToolbarBlock"], (FrameworkElement itemElement) =>
             {
-                Debug.WriteLine("Block clicked");
-
-                var menu = new ContextMenu();
-                var menuItem1 = new MenuItem { Header = LocalizationManager.Instance["ChatToolbarBlockPermanently"] };
-                menuItem1.Click += (_, __) => OnUmimplementedAction(itemElement);
-                var menuItem2 = new MenuItem { Header = LocalizationManager.Instance["ChatToolbarBlockAndReport"] };
-                menuItem2.Click += (_, __) => OnUmimplementedAction(itemElement);
-                menu.Items.Add(menuItem1);
-                menu.Items.Add(menuItem2);
-
-                itemElement.ContextMenu = menu;
-                menu.PlacementTarget = itemElement;
-                menu.Placement = System.Windows.Controls.Primitives.PlacementMode.Bottom;
-                menu.IsOpen = true;
-
+                if (Window.GetWindow(itemElement) is Chat chat)
+                    chat.ShowBlockToolbarMenu(itemElement);
             }, true, LocalizationManager.Instance["ChatToolbarBlockTooltip"])
         };
 
@@ -116,7 +93,14 @@ namespace Aerochat.ViewModels
             dialog.ShowDialog();
         }
 
-        public ObservableCollection<MessageViewModel> Messages { get; set; } = new();
+        private ObservableCollection<MessageViewModel> _messages = new();
+
+        /// <summary>Chat message list; replacing the collection swaps the instance (see <c>Chat</c> channel load).</summary>
+        public ObservableCollection<MessageViewModel> Messages
+        {
+            get => _messages;
+            set => SetProperty(ref _messages, value);
+        }
 
         private string _callStatusText = "";
         public string CallStatusText
@@ -291,5 +275,59 @@ namespace Aerochat.ViewModels
             set => SetProperty(ref _redoEnabled, value);
         }
 
+        private bool _blockedUserWarningDismissed;
+
+        /// <summary>User closed the yellow "blocked user" banner for this session in this window.</summary>
+        public bool BlockedUserWarningDismissed
+        {
+            get => _blockedUserWarningDismissed;
+            set => SetProperty(ref _blockedUserWarningDismissed, value);
+        }
+
+        private bool _hasBlockedUserInConversation;
+
+        /// <summary>1:1 DM with blocked recipient, or group DM with at least one blocked member.</summary>
+        public bool HasBlockedUserInConversation
+        {
+            get => _hasBlockedUserInConversation;
+            set => SetProperty(ref _hasBlockedUserInConversation, value);
+        }
+
+        [DependsOn(nameof(BlockedUserWarningDismissed))]
+        [DependsOn(nameof(HasBlockedUserInConversation))]
+        public bool ShowBlockedUserWarning => !BlockedUserWarningDismissed && HasBlockedUserInConversation;
+
+        private bool _isServerMemberPanelOpen;
+
+        /// <summary>Guild chat only: right-hand member list pane is expanded.</summary>
+        public bool IsServerMemberPanelOpen
+        {
+            get => _isServerMemberPanelOpen;
+            set => SetProperty(ref _isServerMemberPanelOpen, value);
+        }
+
+        /// <summary>Guild members (online) when the member pane is open.</summary>
+        public ObservableCollection<UserViewModel> ServerMemberListOnline { get; } = new();
+
+        /// <summary>Guild members (offline) when the member pane is open.</summary>
+        public ObservableCollection<UserViewModel> ServerMemberListOffline { get; } = new();
+
+        private string _serverMemberOnlineSectionLabel = "";
+
+        /// <summary>Localized &quot;Online (n)&quot; heading for the member list.</summary>
+        public string ServerMemberOnlineSectionLabel
+        {
+            get => _serverMemberOnlineSectionLabel;
+            set => SetProperty(ref _serverMemberOnlineSectionLabel, value);
+        }
+
+        private string _serverMemberOfflineSectionLabel = "";
+
+        /// <summary>Localized &quot;Offline (n)&quot; heading for the member list.</summary>
+        public string ServerMemberOfflineSectionLabel
+        {
+            get => _serverMemberOfflineSectionLabel;
+            set => SetProperty(ref _serverMemberOfflineSectionLabel, value);
+        }
     }
 }
